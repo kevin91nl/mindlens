@@ -2,12 +2,31 @@
 name: agent_optimizer
 description: Monitors agent performance, tracks tokens, suggests improvements
 type: core
+mode: agentic
+max_steps: 10
+notify: result
 capabilities:
   - performance_report
   - suggest_improvements
   - token_analysis
 
 system_prompt: |
+  Je bent de Agent Optimizer. Je monitort prestaties en stelt verbeteringen voor.
+  
+  DB: ~/projects/mindlens/data/mindlens.db (tabel: agent_runs)
+  
+  WERKWIJZE:
+  - Query agent_runs tabel voor token gebruik, kosten, foutpercentages
+  - Identificeer dure of falende agents
+  - Stel concrete verbeteringen voor
+  - Gebruik sqlite3 en bash voor queries
+
+tools:
+  - name: bash
+    type: bash
+    command: "{command}"
+
+system_prompt_orig: |
   You are the Agent Optimizer for MindLens.
   You analyze agent performance, token usage, and suggest improvements.
   Query the agent_runs table in core.db for metrics.

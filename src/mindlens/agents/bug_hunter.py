@@ -108,8 +108,8 @@ class BugHunter(Agent):
 
             body = f"## Bug (auto-detected door Cortex Bug Hunter)\n\n{description}\n\n"
             if suggested_fix:
-                body += f"## Voorgestelde fix\n\n{suggested_fix}\n\n"
-            body += f"**Ernst:** {severity}\n"
+                body += f"## Suggested fix\n\n{suggested_fix}\n\n"
+            body += f"**Severity:** {severity}\n"
             body += f"**Gedetecteerd:** automatisch\n"
 
             issue_url = self._create_github_issue(title, body, labels)

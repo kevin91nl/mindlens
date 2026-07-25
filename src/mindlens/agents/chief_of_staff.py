@@ -8,6 +8,7 @@ from typing import Any
 
 from mindlens.agents.base import Agent, AgentContext, AgentResult
 from mindlens.core.event_bus import Event
+from mindlens.core.router import LLMRouter, RouteAction
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ Available agents:
 - agent_architect: Design new agents
 - agent_optimizer: Monitor performance, token tracking
 - agent_librarian: Skill extraction, version control
+- research_intake: Process research questions
 
 ALWAYS respond in the same language as the user's message. Be concise and helpful.
 
@@ -46,6 +48,16 @@ class ChiefOfStaff(Agent):
     description = "Telegram interface, routing, daily briefing"
     capabilities = ["route", "answer", "briefing", "manage"]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._router: LLMRouter | None = None
+
+    def _get_router(self) -> LLMRouter:
+        """Lazy-initialize the LLM router."""
+        if self._router is None:
+            self._router = LLMRouter(llm=self.llm, config=self.config)
+        return self._router
+
     def _discover_workspaces(self) -> str:
         """Build workspace list from vault for system prompt."""
         vault = self.config.vault_path
@@ -62,7 +74,7 @@ class ChiefOfStaff(Agent):
                             break
                 desc = f": {mission}" if mission else ""
                 lines.append(f"- {item.name}{desc}")
-        return "\n".join(lines) if lines else "- (geen workspaces gevonden)"
+        return "\n".join(lines) if lines else "- (no workspaces found)"
 
     def _get_system_prompt(self) -> str:
         """Build dynamic system prompt with current workspace list."""
@@ -114,75 +126,119 @@ class ChiefOfStaff(Agent):
         return user_message
 
     async def run(self, context: AgentContext) -> AgentResult:
-        """Process a user message and determine routing."""
-        user_message = self._build_context(context)
+        """Process a user message using the LLM router."""
+        router = self._get_router()
+        decision = await router.route(context)
 
-        content, in_tok, out_tok = await self._llm_complete(
-            self._get_system_prompt(), user_message, temperature=0.3
-        )
+        if decision.action == RouteAction.ROUTE and decision.target_agent:
+            return AgentResult(
+                success=True,
+                output=decision.response or f"Routing to {decision.target_agent}...",
+                events=[{
+                    "topic": "agent.route",
+                    "data": {
+                        "target_agent": decision.target_agent,
+                        "target_workspace": decision.target_workspace or "HQ",
+                        "task": decision.task or context.task,
+                    },
+                }],
+            )
+        elif decision.action == RouteAction.ANSWER:
+            return AgentResult(
+                success=True,
+                output=decision.response or "",
+            )
+        elif decision.action == RouteAction.CLARIFY:
+            return AgentResult(
+                success=True,
+                output=decision.response or "Could you please clarify your request?",
+            )
+        else:
+            # Fallback: use the old ROUTE: parsing method
+            user_message = self._build_context(context)
+            content, in_tok, out_tok = await self._llm_complete(
+                self._get_system_prompt(), user_message, temperature=0.3
+            )
 
-        # Check for routing instruction
-        if "ROUTE:" in content:
-            parts = content.split("ROUTE:")[1].strip().split("|")
-            if len(parts) >= 3:
-                target_agent = parts[0].strip()
-                target_workspace = parts[1].strip()
-                task = parts[2].strip()
+            if "ROUTE:" in content:
+                parts = content.split("ROUTE:")[1].strip().split("|")
+                if len(parts) >= 3:
+                    target_agent = parts[0].strip()
+                    target_workspace = parts[1].strip()
+                    task = parts[2].strip()
 
-                return AgentResult(
-                    success=True,
-                    output=content.split("ROUTE:")[0].strip() or f"Routing to {target_agent}...",
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
-                    events=[{
-                        "topic": "agent.route",
-                        "data": {
+                    return AgentResult(
+                        success=True,
+                        output=content.split("ROUTE:")[0].strip() or f"Routing to {target_agent}...",
+                        input_tokens=in_tok,
+                        output_tokens=out_tok,
+                        events=[{
+                            "topic": "agent.route",
+                            "data": {
+                                "target_agent": target_agent,
+                                "target_workspace": target_workspace,
+                                "task": task,
+                            },
+                        }],
+                    )
+
+            return AgentResult(
+                success=True,
+                output=content,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+            )
+
+    async def run_streaming(self, context: AgentContext):
+        """Stream the response using the LLM router."""
+        router = self._get_router()
+        decision = await router.route(context)
+
+        if decision.action == RouteAction.ROUTE and decision.target_agent:
+            # Yield a brief message then publish routing event
+            yield decision.response or f"Routing to {decision.target_agent}..."
+            await self.event_bus.publish(Event(
+                topic="agent.route",
+                source="chief_of_staff",
+                data={
+                    "target_agent": decision.target_agent,
+                    "target_workspace": decision.target_workspace or "HQ",
+                    "task": decision.task or context.task,
+                },
+            ))
+        elif decision.action == RouteAction.ANSWER:
+            yield decision.response or ""
+        elif decision.action == RouteAction.CLARIFY:
+            yield decision.response or "Could you please clarify your request?"
+        else:
+            # Fallback: use the old streaming method
+            user_message = self._build_context(context)
+            full_response = ""
+            async for chunk in self.llm.stream(
+                messages=[
+                    {"role": "system", "content": self._get_system_prompt()},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.3,
+            ):
+                full_response += chunk
+                yield chunk
+
+            if "ROUTE:" in full_response:
+                parts = full_response.split("ROUTE:")[1].strip().split("|")
+                if len(parts) >= 3:
+                    target_agent = parts[0].strip()
+                    target_workspace = parts[1].strip()
+                    task = parts[2].strip()
+
+                    await self.event_bus.publish(Event(
+                        topic="agent.route",
+                        source="chief_of_staff",
+                        data={
                             "target_agent": target_agent,
                             "target_workspace": target_workspace,
                             "task": task,
                         },
-                    }],
-                )
-
-        return AgentResult(
-            success=True,
-            output=content,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-        )
-
-    async def run_streaming(self, context: AgentContext):
-        """Stream the response. Single LLM call for fast time to first token."""
-        user_message = self._build_context(context)
-
-        # Stream directly
-        full_response = ""
-        async for chunk in self.llm.stream(
-            messages=[
-                {"role": "system", "content": self._get_system_prompt()},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0.3,
-        ):
-            full_response += chunk
-            yield chunk
-
-        # After stream completes, check for routing instruction
-        if "ROUTE:" in full_response:
-            parts = full_response.split("ROUTE:")[1].strip().split("|")
-            if len(parts) >= 3:
-                target_agent = parts[0].strip()
-                target_workspace = parts[1].strip()
-                task = parts[2].strip()
-
-                await self.event_bus.publish(Event(
-                    topic="agent.route",
-                    source="chief_of_staff",
-                    data={
-                        "target_agent": target_agent,
-                        "target_workspace": target_workspace,
-                        "task": task,
-                    },
-                ))
+                    ))
 
 

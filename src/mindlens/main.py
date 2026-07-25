@@ -8,23 +8,12 @@ import logging
 import sys
 from pathlib import Path
 
-from mindlens.agents.agent_architect import AgentArchitect
-from mindlens.agents.agent_librarian import AgentLibrarian
-from mindlens.agents.agent_optimizer import AgentOptimizer
 from mindlens.agents.base import AgentContext
 from mindlens.agents.registry import AgentRegistry
 from mindlens.agents.chief_of_staff import ChiefOfStaff
-from mindlens.agents.workspace_manager import WorkspaceManager
-from mindlens.agents.session_observer import SessionObserver
-from mindlens.agents.efficiency_analyst import EfficiencyAnalyst
-from mindlens.agents.reflector import Reflector
-from mindlens.agents.memory_manager import MemoryManager
-from mindlens.agents.test_runner import TestRunner
-from mindlens.agents.bug_hunter import BugHunter
-from mindlens.agents.security_red_team import SecurityRedTeam
-from mindlens.agents.code_agent import CodeAgent
 from mindlens.agents.yaml_agent import YamlAgent, discover_yaml_agents
 from mindlens.core.config import Config
+from mindlens.core.version_check import check_and_update
 from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
 from mindlens.core.event_bus import Event, EventBus
 from mindlens.core.file_watcher import FileWatcher
@@ -85,6 +74,12 @@ class MindLens:
         self._lockfile = lockfile
 
         logger.info("🧠 MindLens booting...")
+
+        # 0. Version check (non-blocking for dev, optional auto-update)
+        try:
+            check_and_update(auto_update=self.config.auto_update)
+        except Exception as exc:
+            logger.debug("Version check skipped: %s", exc)
 
         # 1. Init databases
         self._core_db = await init_core_db(self.config.core_db_path)
@@ -254,22 +249,14 @@ class MindLens:
             await self.telegram.send_message(f"✅ {agent_name} done ({workspace})")
 
     def _register_agents(self) -> None:
-        """Register all core agents + discover YAML agents from vault."""
-        # Core Python agents
+        """Register core Python agents + discover YAML agents from vault.
+
+        YAML-first architecture: most agents are defined in vault YAML files.
+        Only ChiefOfStaff stays Python (Telegram router, too critical for LLM-only).
+        """
+        # Python agents — only ChiefOfStaff (main Telegram router)
         core_agents = [
             ChiefOfStaff,
-            WorkspaceManager,
-            AgentArchitect,
-            AgentOptimizer,
-            AgentLibrarian,
-            SessionObserver,
-            EfficiencyAnalyst,
-            Reflector,
-            MemoryManager,
-            TestRunner,
-            BugHunter,
-            SecurityRedTeam,
-            CodeAgent,
         ]
         for agent_cls in core_agents:
             self.registry.register(agent_cls)

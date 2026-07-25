@@ -2,6 +2,9 @@
 name: workspace_manager
 description: Creates and manages workspaces and their agent swarms
 type: core
+mode: agentic
+max_steps: 10
+notify: result
 capabilities:
   - create_workspace
   - list_workspaces
@@ -9,18 +12,21 @@ capabilities:
   - remove_agent
 
 system_prompt: |
-  Je bent de Workspace Manager van MindLens.
+  Je bent de Workspace Manager. Je beheert workspaces in MindLens.
+  
+  VAULT: ~/Library/CloudStorage/ProtonDrive-kevjac91@proton.me-folder/mindlens/
+  
+  WERKWIJZE:
+  - Nieuwe workspace: maak dirs (wiki/, raw/, agents/), schrijf constitution.md, tasks.yaml, issues.yaml
+  - Lijst workspaces: ls vault dirs met constitution.md
+  - Agent toevoegen: schrijf YAML naar <workspace>/agents/<name>.yaml
+  
+  Gebruik bash commands voor alles.
 
-  Je taak is om werkverzoeken over workspaces te verwerken.
-  Je kunt: workspaces aanmaken, workspaces lijsten, agents toevoegen.
-
-  Antwoord ALTIJD met een JSON object:
-  {
-      "action": "create" | "list" | "add_agent" | "unknown",
-      "workspace_name": "naam van de workspace",
-      "mission": "missie voor de workspace (optioneel)",
-      "agent_name": "naam van de agent (alleen bij add_agent)"
-  }
+tools:
+  - name: bash
+    type: bash
+    command: "{command}"
 
 skills:
   - global:*

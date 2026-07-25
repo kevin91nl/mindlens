@@ -198,7 +198,7 @@ class YamlAgent(Agent):
         tool_data = await self._gather_tool_data(context)
 
         # Build the prompt
-        user_message = f"Taak: {context.task}\n"
+        user_message = f"Task: {context.task}\n"
         if context.workspace:
             user_message += f"Workspace: {context.workspace}\n"
         if tool_data:
@@ -581,6 +581,12 @@ class YamlAgent(Agent):
         except KeyError:
             pass  # Leave unresolved placeholders as-is
 
+        # Skip execution if unresolved {param} placeholders remain
+        # (parameterized tools like read_raw, write_wiki need explicit args)
+        if re.search(r'\{[a-z_]+\}', command):
+            logger.debug("Skipping tool with unresolved placeholders: %s", command[:80])
+            return ""
+
         timeout = tool_def.get("timeout", 30)
         cwd = tool_def.get("cwd", str(project))
 
@@ -724,7 +730,7 @@ class YamlAgent(Agent):
         """List recent events from the event bus."""
         events = self.event_bus.history(limit=20)
         if not events:
-            return "Geen recente events."
+            return "No recent events."
 
         output = "Recente events:\n"
         for e in events[-15:]:
@@ -795,7 +801,7 @@ class YamlAgent(Agent):
             if summary:
                 total, success, tokens, cost, duration = summary
                 rate = (success / total * 100) if total else 0
-                output += f"Totaal: {total} runs, {rate:.0f}% success, {tokens} tokens, ${cost:.4f}\n\n"
+                output += f"Total: {total} runs, {rate:.0f}% success, {tokens} tokens, ${cost:.4f}\n\n"
 
                 output += "Per agent:\n"
                 for agent, runs, successes, tokens, dur in agents:

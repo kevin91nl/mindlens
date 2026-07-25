@@ -77,4 +77,4 @@ class Reflector(Agent):
             for e in events[-5:]:
                 data.append(f"  - {e}")
 
-        return "\n".join(data) if data else "Geen data beschikbaar."
+        return "\n".join(data) if data else "No data available."

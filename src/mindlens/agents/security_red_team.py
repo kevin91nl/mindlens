@@ -159,7 +159,7 @@ class SecurityRedTeam(Agent):
         # Run full scan
         scan_result = await self._full_scan()
 
-        if "geen security issues" in scan_result.output.lower():
+        if "no security issues" in scan_result.output.lower():
             return scan_result
 
         # Parse issues from LLM response
@@ -169,7 +169,7 @@ class SecurityRedTeam(Agent):
         except json.JSONDecodeError:
             return AgentResult(
                 success=True,
-                output=f"Security scan resultaat (niet gestructureerd):\n\n{scan_result.output[:500]}",
+                output=f"Security scan result (not structured):\n\n{scan_result.output[:500]}",
                 input_tokens=scan_result.input_tokens,
                 output_tokens=scan_result.output_tokens,
             )

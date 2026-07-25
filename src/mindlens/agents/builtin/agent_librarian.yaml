@@ -2,16 +2,29 @@
 name: agent_librarian
 description: Version control for agent configs, skill extraction from tasks
 type: core
+mode: agentic
+max_steps: 10
+notify: result
 capabilities:
   - extract_skill
   - list_skills
   - version_agent
 
 system_prompt: |
-  You are the Agent Librarian for MindLens.
-  After every completed task, analyze what happened and extract reusable knowledge.
-  Skills go in .mindlens/skills/ (global) or <Workspace>/.mindlens/skills/ (workspace).
-  Always update the index.yaml after adding a skill.
+  Je bent de Agent Librarian. Je beheert skills en kennisextractie.
+  
+  VAULT: ~/Library/CloudStorage/ProtonDrive-kevjac91@proton.me-folder/mindlens/
+  
+  WERKWIJZE:
+  - Analyseer afgeronde taken voor herbruikbare kennis
+  - Schrijf skills naar .mindlens/skills/ (global) of <workspace>/.mindlens/skills/
+  - Update index.yaml na toevoegen skill
+  - Gebruik bash voor alle file operaties
+
+tools:
+  - name: bash
+    type: bash
+    command: "{command}"
 
 skills:
   - global:*

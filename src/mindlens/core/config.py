@@ -31,6 +31,7 @@ class Config:
     # Runtime
     env: str = "development"
     log_level: str = "INFO"
+    auto_update: bool = False
 
     @classmethod
     def _find_vault(cls) -> Path:
@@ -89,6 +90,7 @@ class Config:
             project_path=Path(os.environ.get("MINDLENS_PROJECT_PATH", str(Path.home() / "projects" / "mindlens"))),
             env=os.environ.get("MINDLENS_ENV", "development"),
             log_level=os.environ.get("MINDLENS_LOG_LEVEL", "INFO"),
+            auto_update=os.environ.get("MINDLENS_AUTO_UPDATE", "0").lower() in ("1", "true", "yes"),
         )
 
     def workspace_path(self, name: str) -> Path:

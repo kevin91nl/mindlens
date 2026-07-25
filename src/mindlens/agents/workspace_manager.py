@@ -97,16 +97,19 @@ class WorkspaceManager(Agent):
             SYSTEM_PROMPT, user_msg, temperature=0.1
         )
 
-        # Parse JSON response
+        # Parse JSON response — handle markdown code blocks
         try:
-            # Extract JSON from response (handle markdown code blocks)
+            import re
             json_str = content
             if "```" in content:
-                for line in content.split("\n"):
-                    line = line.strip()
-                    if line.startswith("{"):
-                        json_str = line
-                        break
+                match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', content, re.DOTALL)
+                if match:
+                    json_str = match.group(1).strip()
+            elif not content.strip().startswith("{"):
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1:
+                    json_str = content[start:end + 1]
             intent = json.loads(json_str)
         except (json.JSONDecodeError, ValueError):
             return AgentResult(
