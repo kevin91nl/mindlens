@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from mindlens.agents.base import Agent, AgentContext, AgentResult
@@ -38,8 +35,8 @@ Antwoord ALTIJD in het Nederlands. Wees beknopt en behulpzaam.
 Als je een vraag direct kunt beantwoorden, doe dat dan gewoon.
 Als het verzoek een specifieke agent nodig heeft, zeg dan: "ROUTE: agent_naam | workspace | taak"
 
-BELANGRIJK: Als de gebruiker een onderzoeksvraag stelt (begint met "onderzoek", "hoe", "wat", "waarom", "wanneer" over een onderwerp), zeg dan: "RESEARCH: <vraag>"
-Dit zorgt ervoor dat de vraag wordt opgeslagen in de raw/notebooks/ map.
+BELANGRIJK: Als de gebruiker een onderzoeksvraag stelt (begint met "onderzoek", "hoe", "wat", "waarom", "wanneer" over een onderwerp), routeer dan naar research_intake:
+"ROUTE: research_intake | Research | <de volledige vraag>"
 """
 
 
@@ -91,33 +88,6 @@ class ChiefOfStaff(Agent):
 
         return user_message
 
-    def _save_research_question(self, question: str, workspace: str = "Research") -> str | None:
-        """Save a research question to the workspace's raw/notebooks/ folder."""
-        if workspace != "Research":
-            return None
-
-        # Create slug from question
-        slug = re.sub(r'[^a-z0-9]+', '-', question.lower())[:60].strip('-')
-        date_prefix = datetime.now().strftime("%Y%m%d")
-        folder_name = f"{date_prefix}-{slug}"
-
-        raw_dir = self.config.workspace_path(workspace) / "raw" / "notebooks" / folder_name
-        raw_dir.mkdir(parents=True, exist_ok=True)
-
-        question_file = raw_dir / "question.md"
-        if not question_file.exists():
-            question_file.write_text(
-                f"# {question}\n\n"
-                f"**Aangemaakt:** {datetime.now().isoformat()}\n"
-                f"**Bron:** Telegram\n\n"
-                f"## Vraag\n\n{question}\n",
-                encoding="utf-8"
-            )
-            logger.info(f"Saved research question to {raw_dir}")
-            return str(raw_dir)
-
-        return None
-
     async def run(self, context: AgentContext) -> AgentResult:
         """Process a user message and determine routing."""
         user_message = self._build_context(context)
@@ -147,18 +117,6 @@ class ChiefOfStaff(Agent):
                             "task": task,
                         },
                     }],
-                )
-
-        # Check for research question
-        if "RESEARCH:" in content:
-            question = content.split("RESEARCH:")[1].strip()
-            saved_path = self._save_research_question(question)
-            if saved_path:
-                return AgentResult(
-                    success=True,
-                    output=f"Onderzoeksvraag opgeslagen in: {saved_path}\n\n{content.split('RESEARCH:')[0].strip()}",
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
                 )
 
         return AgentResult(
@@ -202,9 +160,4 @@ class ChiefOfStaff(Agent):
                     },
                 ))
 
-        # Check for research question
-        if "RESEARCH:" in full_response:
-            question = full_response.split("RESEARCH:")[1].strip()
-            saved_path = self._save_research_question(question)
-            if saved_path:
-                yield f"\n\nOnderzoeksvraag opgeslagen in: {saved_path}"
+

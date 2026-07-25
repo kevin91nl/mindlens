@@ -15,16 +15,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScheduledTask:
-    """A task that runs at a scheduled time."""
+    """A task that runs at a scheduled time or via an event trigger."""
     name: str
-    schedule: str  # cron expression: "minute hour day_of_month month day_of_week"
+    schedule: str  # cron expression: "minute hour day_of_month month day_of_week" (empty if trigger-only)
     agent: str
     workspace: str
     message: str
     enabled: bool = True
     notify: str = "summary"  # "silent", "summary", "full"
-    continuous: bool = False  # run as persistent background agent
-    check_command: str = ""   # bash command to check if work exists (exit 0 = work, exit 1 = idle)
+    trigger: str = ""              # bash command — exit 0 = work exists, exit 1 = idle
+    trigger_interval: int = 30     # seconds between trigger checks
 
     def matches_now(self, minute: int, hour: int, day: int, month: int, weekday: int) -> bool:
         """Check if this task should run now based on cron expression."""
@@ -99,7 +99,7 @@ class Scheduler:
         return self._tasks
 
     def _load_yaml_agent_tasks(self) -> list[ScheduledTask]:
-        """Discover YAML agents with schedule fields and create tasks."""
+        """Discover YAML agents with schedule or trigger fields and create tasks."""
         from mindlens.agents.yaml_agent import discover_yaml_agents
 
         tasks = []
@@ -108,8 +108,11 @@ class Scheduler:
         for yaml_path in yaml_paths:
             try:
                 data = yaml.safe_load(yaml_path.read_text()) or {}
-                schedule = data.get("schedule")
-                if not schedule:
+                schedule = data.get("schedule", "")
+                trigger = data.get("trigger", "")
+
+                # Agent needs at least a schedule OR a trigger
+                if not schedule and not trigger:
                     continue
 
                 name = data.get("name", yaml_path.stem)
@@ -129,6 +132,8 @@ class Scheduler:
                     message=f"Voer {name} taak uit: {data.get('description', '')}",
                     enabled=True,
                     notify=notify,
+                    trigger=trigger,
+                    trigger_interval=int(data.get("trigger_interval", 30)),
                 ))
             except Exception:
                 continue
@@ -162,10 +167,16 @@ class Scheduler:
         return tasks
 
     async def start(self) -> None:
-        """Start the scheduler loop. Checks every minute."""
+        """Start the scheduler loop. Checks every minute + spawns continuous agents."""
         self._running = True
         self.load_tasks()
         logger.info("Scheduler started. Checking every 60s.")
+
+        # Spawn trigger-based agents as persistent background tasks
+        for task in self._tasks:
+            if task.enabled and task.trigger:
+                logger.info("Spawning trigger agent: %s (every %ds)", task.name, task.trigger_interval)
+                asyncio.create_task(self._run_trigger_loop(task))
 
         while self._running:
             try:
@@ -189,6 +200,40 @@ class Scheduler:
                     await self.handler(task.agent, task.workspace, task.message)
                 except Exception:
                     logger.exception("Scheduled task %s failed", task.name)
+
+    async def _run_trigger_loop(self, task: ScheduledTask) -> None:
+        """Trigger-based agent loop: run deterministic check, invoke agent only when work exists."""
+        import subprocess as _sp
+        logger.info("Trigger agent '%s' started (polling every %ds)", task.name, task.trigger_interval)
+
+        while self._running:
+            try:
+                # Deterministic check — no LLM, no tokens
+                result = _sp.run(
+                    task.trigger, shell=True, capture_output=True,
+                    text=True, timeout=15,
+                )
+                has_work = result.returncode == 0
+
+                if has_work:
+                    logger.info("Trigger '%s': work detected, running agent", task.name)
+                    try:
+                        await self.handler(task.agent, task.workspace, task.message)
+                    except Exception:
+                        logger.exception("Trigger agent '%s' failed", task.name)
+                    # Short cooldown before re-checking to avoid tight loops
+                    await asyncio.sleep(10)
+                    continue
+                else:
+                    # No work — wait before checking again
+                    await asyncio.sleep(task.trigger_interval)
+
+            except _sp.TimeoutExpired:
+                logger.warning("Trigger '%s': check timed out", task.name)
+                await asyncio.sleep(task.trigger_interval)
+            except Exception:
+                logger.exception("Trigger '%s': check failed", task.name)
+                await asyncio.sleep(task.trigger_interval)
 
     def stop(self) -> None:
         """Stop the scheduler."""
