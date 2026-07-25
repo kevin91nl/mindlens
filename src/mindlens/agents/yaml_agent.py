@@ -212,6 +212,11 @@ class YamlAgent(Agent):
                     if not number:
                         continue
 
+                    # Skip template placeholder issues
+                    title = action.get("title", "")
+                    if "{" in str(title) or "}" in str(title):
+                        continue
+
                     if act == "close":
                         reason = action.get("reason", "triage: gesloten")
                         result = await self._run_bash_tool("close_issue", {"number": str(number), "reason": reason})
