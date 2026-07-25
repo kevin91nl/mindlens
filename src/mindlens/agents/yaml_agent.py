@@ -221,6 +221,25 @@ class YamlAgent(Agent):
                             result = await self._run_bash_tool("label_issue", {"number": str(number), "label": label})
                             results.append(f"🏷️ #{number} gelabeled: {label}")
 
+                    elif act == "analyzed":
+                        root_cause = action.get("root_cause", "")
+                        files = ", ".join(action.get("files", []))
+                        fix = action.get("fix_proposed", False)
+                        comment = f"🔍 **Solver analyse**\n\n"
+                        comment += f"**Root cause:** {root_cause}\n"
+                        if files:
+                            comment += f"**Bestanden:** {files}\n"
+                        if fix:
+                            comment += f"**Fix voorgesteld:** {action.get('fix_description', '')}\n"
+                        result = await self._run_bash_tool("comment_issue", {"number": str(number), "comment": comment})
+                        results.append(f"🔍 #{number} geanalyseerd")
+
+                    elif act == "needs_info":
+                        questions = action.get("questions", action.get("reason", "Meer informatie nodig"))
+                        comment = f"❓ **Solver heeft meer informatie nodig:**\n\n{questions}"
+                        result = await self._run_bash_tool("comment_issue", {"number": str(number), "comment": comment})
+                        results.append(f"❓ #{number} meer info gevraagd")
+
             except json.JSONDecodeError:
                 continue
             except Exception as e:
