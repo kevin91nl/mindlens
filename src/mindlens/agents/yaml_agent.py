@@ -438,11 +438,19 @@ class YamlAgent(Agent):
 
     async def _gather_tool_data(self, context: AgentContext) -> str:
         """Gather data from configured tools."""
+        import re as _re
         data_parts = []
+        _STANDARD_VARS = {"vault_path", "project_path"}
 
         for tool in self._tools:
             try:
                 if isinstance(tool, dict):
+                    # Skip tools with unsubstituted {var} placeholders
+                    cmd = tool.get("command", "")
+                    placeholders = set(_re.findall(r"\{(\w+)\}", cmd))
+                    if placeholders - _STANDARD_VARS:
+                        logger.debug("Skipping tool %s: unsubstituted vars %s", tool.get("name"), placeholders - _STANDARD_VARS)
+                        continue
                     name = tool.get("name", "bash")
                     result = await self._execute_bash_tool(tool, context)
                 else:
