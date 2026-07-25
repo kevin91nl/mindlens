@@ -221,6 +221,12 @@ class YamlAgent(Agent):
         elif tool_name == "check_dead_references":
             return self._check_dead_references()
 
+        elif tool_name == "list_events":
+            return self._list_events()
+
+        elif tool_name == "query_agent_runs":
+            return self._query_agent_runs(context)
+
         return ""
 
     def _search_code(self, context: AgentContext) -> str:
@@ -334,7 +340,6 @@ class YamlAgent(Agent):
     def _check_dead_references(self) -> str:
         """Check for references to non-existent files or modules."""
         vault = self.config.vault_path
-        project = Path.home() / "projects" / "mindlens"
         issues = []
 
         # Check repos.yaml references
@@ -374,6 +379,97 @@ class YamlAgent(Agent):
             return "✅ Geen dode referenties gevonden."
 
         return "❌ Dode referenties:\n" + "\n".join(f"- {i}" for i in issues)
+
+    def _list_events(self) -> str:
+        """List recent events from the event bus."""
+        events = self.event_bus.history(limit=20)
+        if not events:
+            return "Geen recente events."
+
+        output = "Recente events:\n"
+        for e in events[-15:]:
+            output += f"- [{e.source}] {e.topic}: {str(e.data)[:80]}\n"
+        return output
+
+    def _query_agent_runs(self, context: AgentContext) -> str:
+        """Query agent runs with analysis."""
+        import aiosqlite
+
+        try:
+            conn = None
+            # Try to connect to core DB
+            db_path = self.config.core_db_path()
+            if not db_path.exists():
+                return "Geen agent_runs database gevonden."
+
+            import asyncio
+
+            async def _query():
+                conn = await aiosqlite.connect(str(db_path))
+
+                # Summary stats
+                cursor = await conn.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes,
+                        SUM(input_tokens + output_tokens) as total_tokens,
+                        SUM(cost_usd) as total_cost,
+                        AVG(duration_seconds) as avg_duration
+                    FROM agent_runs
+                    WHERE created_at >= DATE('now', '-7 days')
+                """)
+                summary = await cursor.fetchone()
+
+                # Per-agent breakdown
+                cursor = await conn.execute("""
+                    SELECT agent_name,
+                           COUNT(*) as runs,
+                           SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes,
+                           SUM(input_tokens + output_tokens) as tokens,
+                           AVG(duration_seconds) as avg_dur
+                    FROM agent_runs
+                    WHERE created_at >= DATE('now', '-7 days')
+                    GROUP BY agent_name
+                    ORDER BY runs DESC
+                """)
+                agents = await cursor.fetchall()
+
+                # Trend (daily)
+                cursor = await conn.execute("""
+                    SELECT DATE(created_at) as day,
+                           COUNT(*) as runs,
+                           SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes,
+                           SUM(input_tokens + output_tokens) as tokens
+                    FROM agent_runs
+                    WHERE created_at >= DATE('now', '-7 days')
+                    GROUP BY day ORDER BY day
+                """)
+                trend = await cursor.fetchall()
+
+                await conn.close()
+                return summary, agents, trend
+
+            summary, agents, trend = asyncio.get_event_loop().run_until_complete(_query())
+
+            output = "Agent Runs (7 dagen):\n"
+            if summary:
+                total, success, tokens, cost, duration = summary
+                rate = (success / total * 100) if total else 0
+                output += f"Totaal: {total} runs, {rate:.0f}% success, {tokens} tokens, ${cost:.4f}\n\n"
+
+                output += "Per agent:\n"
+                for agent, runs, successes, tokens, dur in agents:
+                    r = (successes / runs * 100) if runs else 0
+                    output += f"  {agent}: {runs} runs, {r:.0f}% success, {tokens} tokens, {dur:.1f}s avg\n"
+
+                output += "\nTrend:\n"
+                for day, runs, successes, tokens in trend:
+                    output += f"  {day}: {runs} runs, {tokens} tokens\n"
+
+            return output
+
+        except Exception as e:
+            return f"Fout bij ophalen agent runs: {e}"
 
     def create_github_issue(self, title: str, body: str, labels: list[str]) -> str | None:
         """Create a GitHub issue using gh CLI."""
