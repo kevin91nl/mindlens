@@ -177,9 +177,54 @@ class YamlAgent(Agent):
 
         return "\n\n".join(data_parts) if data_parts else ""
 
-    async def _execute_tool(self, tool_name: str, context: AgentContext) -> str:
-        """Execute a tool and return its output."""
+
+    async def _execute_bash_tool(self, tool_def: dict, context: AgentContext) -> str:
+        """Execute a bash tool defined in YAML."""
+        import subprocess
+        command = tool_def.get("command", "")
+        if not command:
+            return ""
+
+        # Template variables
         vault = self.config.vault_path
+        project = Path.home() / 'projects' / 'mindlens'
+        variables = {
+            "vault_path": str(vault),
+            "project_path": str(project),
+            "workspace": context.workspace or "",
+            "task": context.task[:200],
+        }
+        try:
+            command = command.format(**variables)
+        except KeyError:
+            pass  # Leave unresolved placeholders as-is
+
+        timeout = tool_def.get("timeout", 30)
+        cwd = tool_def.get("cwd", str(project))
+
+        try:
+            result = subprocess.run(
+                command, shell=True, capture_output=True,
+                text=True, timeout=timeout, cwd=cwd,
+            )
+            output = result.stdout.strip()
+            if not output and result.stderr:
+                output = f"(stderr) {result.stderr.strip()[:500]}"
+            # Truncate to avoid token explosion
+            max_lines = tool_def.get("max_lines", 30)
+            lines_out = output.splitlines()
+            if len(lines_out) > max_lines:
+                output = "\n".join(lines_out[:max_lines]) + f"\n... ({len(lines_out) - max_lines} lines truncated)"
+            return output or "(geen output)"
+        except subprocess.TimeoutExpired:
+            return "(timeout)"
+        except Exception as e:
+            return f"(fout: {e})"
+
+    async def _execute_tool(self, tool_name: str, context: AgentContext) -> str:
+        """Execute a built-in Python tool (DB/vault access). Bash tools handled by _execute_bash_tool."""
+        vault = self.config.vault_path
+
 
         if tool_name == "list_agent_runs":
             import aiosqlite
@@ -275,23 +320,12 @@ class YamlAgent(Agent):
             pages = [p.stem for p in wiki_dir.glob("*.md")]
             return f"Wiki pagina's in {ws}: {', '.join(pages)}" if pages else f"Geen wiki pagina's in {ws}."
 
-        elif tool_name == "search_code":
             return self._search_code(context)
 
-        elif tool_name == "scan_python_imports":
-            return self._scan_python_imports()
 
-        elif tool_name == "scan_platform_issues":
-            return self._scan_platform_issues()
 
-        elif tool_name == "check_yaml_consistency":
-            return self._check_yaml_consistency()
 
-        elif tool_name == "verify_vault_structure":
-            return self._verify_vault_structure()
 
-        elif tool_name == "check_dead_references":
-            return self._check_dead_references()
 
         elif tool_name == "list_events":
             return self._list_events()
@@ -299,228 +333,10 @@ class YamlAgent(Agent):
         elif tool_name == "query_agent_runs":
             return self._query_agent_runs(context)
 
-        elif tool_name == "run_command":
-            return self._run_command(context)
 
-        elif tool_name == "check_structure":
-            return self._check_structure()
 
-        elif tool_name == "verify_config":
-            return self._verify_config()
 
         return ""
-
-    def _search_code(self, context: AgentContext) -> str:
-        """Search for code patterns in the project."""
-        import subprocess
-        project = Path.home() / "projects" / "mindlens"
-        query = context.task[:50]
-        try:
-            result = subprocess.run(
-                ["grep", "-rn", "--include=*.py", query, str(project / "src")],
-                capture_output=True, text=True, timeout=10,
-            )
-            lines = result.stdout.strip().splitlines()[:10]
-            return "\n".join(lines) if lines else f"Geen resultaten voor '{query}'"
-        except Exception:
-            return "Zoekopdracht mislukt"
-
-    def _scan_python_imports(self) -> str:
-        """Check for broken Python imports."""
-        project = Path.home() / "projects" / "mindlens"
-        src = project / "src"
-        if not src.exists():
-            return "Geen src/ gevonden."
-
-        issues = []
-        for py_file in src.rglob("*.py"):
-            try:
-                content = py_file.read_text()
-                for line_num, line in enumerate(content.splitlines(), 1):
-                    stripped = line.strip()
-                    if stripped.startswith("from mindlens.") or stripped.startswith("import mindlens."):
-                        # Check if the module exists
-                        parts = stripped.replace("from ", "").replace("import ", "").split(".")
-                        module_path = src / "/".join(parts[:-1]) / "__init__.py"
-                        if not module_path.exists() and not (src / "/".join(parts)).with_suffix(".py").exists():
-                            issues.append(f"{py_file.name}:{line_num} — {stripped[:60]}")
-            except Exception:
-                continue
-
-        if not issues:
-            return "✅ Alle Python imports zijn geldig."
-
-        return "⚠️ Mogelijk gebroken imports:\n" + "\n".join(f"- {i}" for i in issues[:10])
-
-    def _scan_platform_issues(self) -> str:
-        """Scan for cross-platform compatibility issues."""
-        import re
-        projects = [
-            Path.home() / "projects" / "mindlens" / "src",
-            Path.home() / "projects" / "riskstudio" / "riskstudio-worker" / "src",
-        ]
-
-        # Patterns that indicate real platform issues (not regex strings or dev paths)
-        platform_patterns = [
-            (r'subprocess\.run\([^)]*shell\s*=\s*True', "subprocess met shell=True (shell-dependent)"),
-            (r'os\.system\(', "os.system() gebruikt (shell-dependent)"),
-            (r'os\.path\.join', "os.path.join (gebruik pathlib i.p.v.)"),
-            (r'tempfile\.gettempdir\(\)', "tempfile.gettempdir() (platform-dependent)"),
-            (r'sys\.platform', "sys.platform check (kan platform-specifiek zijn)"),
-            (r'platform\.system\(\)', "platform.system() check"),
-        ]
-
-        # Skip patterns: strings, comments, test files, scanner itself
-        skip_patterns = [
-            r'^\s*#',  # comments
-            r'^\s*["\']',  # string literals
-            r'r["\']',  # raw strings (regex)
-            r'test_',  # test files
-            r'_test\.py',
-        ]
-
-        issues = []
-        for project in projects:
-            if not project.exists():
-                continue
-            for py_file in project.rglob("*.py"):
-                # Skip test files and scanner itself
-                if "test" in py_file.name.lower() or py_file.name == "yaml_agent.py":
-                    continue
-                try:
-                    content = py_file.read_text()
-                    rel_path = py_file.relative_to(project.parent.parent)
-                    for line_num, line in enumerate(content.splitlines(), 1):
-                        # Skip comments and string-only lines
-                        if any(re.search(p, line) for p in skip_patterns):
-                            continue
-                        for pattern, desc in platform_patterns:
-                            if re.search(pattern, line):
-                                issues.append({
-                                    "file": str(rel_path),
-                                    "line": line_num,
-                                    "issue": desc,
-                                    "code": line.strip()[:80],
-                                })
-                except Exception:
-                    continue
-
-        if not issues:
-            return "✅ Geen platform-specifieke issues gevonden."
-
-        result = f"⚠️ {len(issues)} platform-specifieke issues gevonden:\n\n"
-        for i in issues[:15]:
-            result += f"- **{i['file']}:{i['line']}** — {i['issue']}\n  `{i['code']}`\n\n"
-        return result
-
-    def _check_yaml_consistency(self) -> str:
-        """Check if YAML agent definitions match Python agents."""
-        vault = self.config.vault_path
-        project = Path.home() / "projects" / "mindlens"
-        issues = []
-
-        # Check YAML agents reference valid tools
-        for yaml_path in discover_yaml_agents(vault):
-            try:
-                data = yaml.safe_load(yaml_path.read_text()) or {}
-                name = data.get("name", "?")
-                tools = data.get("tools", [])
-                for tool in tools:
-                    # Check if tool exists in yaml_agent.py
-                    yaml_agent_file = project / "src" / "mindlens" / "agents" / "yaml_agent.py"
-                    if yaml_agent_file.exists():
-                        content = yaml_agent_file.read_text()
-                        if f"tool_name == \"{tool}\"" not in content and tool not in ("read_file", "search_code"):
-                            issues.append(f"YAML agent '{name}' references tool '{tool}' not implemented")
-            except Exception:
-                continue
-
-        if not issues:
-            return "✅ YAML definities zijn consistent met Python code."
-
-        return "⚠️ Inconsistente YAML definities:\n" + "\n".join(f"- {i}" for i in issues[:10])
-
-    def _verify_vault_structure(self) -> str:
-        """Verify expected vault structure."""
-        vault = self.config.vault_path
-        issues = []
-
-        # Expected files at root
-        expected_root = ["CONTEXT.md", "AGENTS.md", "README.md", "tasks.yaml", "issues.yaml", "repos.yaml"]
-        for f in expected_root:
-            if not (vault / f).exists():
-                issues.append(f"Missing root file: {f}")
-
-        # Expected dirs at root
-        expected_dirs = ["agents", "docs", "docs/adr"]
-        for d in expected_dirs:
-            if not (vault / d).is_dir():
-                issues.append(f"Missing root directory: {d}")
-
-        # Check each workspace
-        for item in vault.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
-                ws_issues = []
-                if not (item / "constitution.md").exists():
-                    ws_issues.append("constitution.md")
-                if not (item / "tasks.yaml").exists():
-                    ws_issues.append("tasks.yaml")
-                if not (item / "issues.yaml").exists():
-                    ws_issues.append("issues.yaml")
-                if not (item / "repos.yaml").exists():
-                    ws_issues.append("repos.yaml")
-                if not (item / "agents").is_dir():
-                    ws_issues.append("agents/")
-                if ws_issues:
-                    issues.append(f"Workspace '{item.name}' missing: {', '.join(ws_issues)}")
-
-        if not issues:
-            return "✅ Vault structuur is compleet."
-
-        return "⚠️ Ontbrekende bestanden:\n" + "\n".join(f"- {i}" for i in issues)
-
-    def _check_dead_references(self) -> str:
-        """Check for references to non-existent files or modules."""
-        vault = self.config.vault_path
-        issues = []
-
-        # Check repos.yaml references
-        repos_path = vault / "repos.yaml"
-        if repos_path.exists():
-            data = yaml.safe_load(repos_path.read_text()) or {}
-            for repo in data.get("repos") or []:
-                path = Path(repo.get("path", "")).expanduser()
-                if not path.exists():
-                    issues.append(f"repos.yaml: '{repo.get('name')}' path niet gevonden: {path}")
-
-        # Check workspace repos.yaml
-        for item in vault.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
-                ws_repos = item / "repos.yaml"
-                if ws_repos.exists():
-                    data = yaml.safe_load(ws_repos.read_text()) or {}
-                    for repo in data.get("repos") or []:
-                        path = Path(repo.get("path", "")).expanduser()
-                        if not path.exists():
-                            issues.append(f"{item.name}/repos.yaml: '{repo.get('name')}' path niet gevonden: {path}")
-
-        # Check ADR references in CONTEXT.md
-        context_md = vault / "CONTEXT.md"
-        if context_md.exists():
-            import re
-            content = context_md.read_text()
-            links = re.findall(r'\[.*?\]\((.*?)\)', content)
-            for link in links:
-                if link.startswith("http"):
-                    continue
-                ref_path = vault / link
-                if not ref_path.exists():
-                    issues.append(f"CONTEXT.md: dode link '{link}'")
-
-        if not issues:
-            return "✅ Geen dode referenties gevonden."
-
-        return "❌ Dode referenties:\n" + "\n".join(f"- {i}" for i in issues)
 
     def _list_events(self) -> str:
         """List recent events from the event bus."""
@@ -649,139 +465,6 @@ class YamlAgent(Agent):
         except Exception as e:
             logger.error("Exception creating GitHub issue: %s", e)
             return None
-
-    def _run_command(self, context: AgentContext) -> str:
-        """Run a shell command and return output."""
-        # Extract command from task
-        task = context.task
-        # Look for command patterns
-        if "install" in task.lower():
-            return self._check_install_script()
-        elif "cli" in task.lower() or "status" in task.lower():
-            project = Path.home() / "projects" / "mindlens"
-            try:
-                result = subprocess.run(
-                    ["uv", "run", "mindlens-cli", "status"],
-                    capture_output=True, text=True, timeout=15, cwd=str(project),
-                )
-                return result.stdout[:2000]
-            except Exception as e:
-                return f"CLI error: {e}"
-        return ""
-
-    def _check_structure(self) -> str:
-        """Check the vault and project structure for completeness."""
-        vault = self.config.vault_path
-        project = Path.home() / "projects" / "mindlens"
-        issues = []
-
-        # Check vault structure
-        vault_expected = {
-            "CONTEXT.md": "file",
-            "AGENTS.md": "file",
-            "README.md": "file",
-            "tasks.yaml": "file",
-            "issues.yaml": "file",
-            "repos.yaml": "file",
-            "agents/": "dir",
-            "docs/adr/": "dir",
-        }
-        for item, kind in vault_expected.items():
-            path = vault / item
-            if kind == "file" and not path.is_file():
-                issues.append(f"Vault missing: {item}")
-            elif kind == "dir" and not path.is_dir():
-                issues.append(f"Vault missing dir: {item}")
-
-        # Check project structure
-        project_expected = {
-            "pyproject.toml": "file",
-            "install.sh": "file",
-            "README.md": "file",
-            "AGENTS.md": "file",
-            ".env.example": "file",
-            ".gitignore": "file",
-            "src/mindlens/": "dir",
-            "src/mindlens/core/": "dir",
-            "src/mindlens/agents/": "dir",
-            "docs/adr/": "dir",
-        }
-        for item, kind in project_expected.items():
-            path = project / item
-            if kind == "file" and not path.is_file():
-                issues.append(f"Project missing: {item}")
-            elif kind == "dir" and not path.is_dir():
-                issues.append(f"Project missing dir: {item}")
-
-        # Check .env.example has required vars
-        env_example = project / ".env.example"
-        if env_example.exists():
-            content = env_example.read_text()
-            required_vars = ["MINDLENS_LLM_API_KEY", "MINDLENS_TELEGRAM_TOKEN", "MINDLENS_VAULT_PATH"]
-            for var in required_vars:
-                if var not in content:
-                    issues.append(f".env.example missing: {var}")
-
-        # Check install.sh is executable
-        install = project / "install.sh"
-        if install.exists() and not os.access(str(install), os.X_OK):
-            issues.append("install.sh is not executable")
-
-        if not issues:
-            return "✅ Structuur is compleet en correct."
-
-        return "⚠️ Structuur problemen:\n" + "\n".join(f"- {i}" for i in issues)
-
-    def _verify_config(self) -> str:
-        """Verify .env configuration is valid."""
-        project = Path.home() / "projects" / "mindlens"
-        issues = []
-
-        env_example = project / ".env.example"
-        if not env_example.exists():
-            issues.append(".env.example niet gevonden")
-        else:
-            content = env_example.read_text()
-            # Check for real values (should be placeholders)
-            if re.search(r'sk-or-v1-[a-zA-Z0-9]{20,}', content):
-                issues.append("CRITICAL: Echte API key in .env.example!")
-            if "8757887592" in content:
-                issues.append("CRITICAL: Echte Telegram token in .env.example!")
-
-        # Check pyproject.toml
-        pyproject = project / "pyproject.toml"
-        if pyproject.exists():
-            content = pyproject.read_text()
-            if "mindlens" not in content:
-                issues.append("pyproject.toml mist project naam")
-
-        if not issues:
-            return "✅ Configuratie is correct."
-
-        return "⚠️ Configuratie problemen:\n" + "\n".join(f"- {i}" for i in issues)
-
-    def _check_install_script(self) -> str:
-        """Check if install.sh is complete and correct."""
-        project = Path.home() / "projects" / "mindlens"
-        install = project / "install.sh"
-
-        if not install.exists():
-            return "❌ install.sh niet gevonden"
-
-        content = install.read_text()
-        issues = []
-
-        # Check for required steps
-        required = ["uv sync", ".env.example", "MINDLENS_VAULT_PATH"]
-        for r in required:
-            if r not in content:
-                issues.append(f"install.sh mist: {r}")
-
-        if not issues:
-            return "✅ install.sh is compleet."
-
-        return "⚠️ install.sh problemen:\n" + "\n".join(f"- {i}" for i in issues)
-
 
 def discover_yaml_agents(vault_path: Path) -> list[Path]:
     """Discover all YAML agent definitions in the vault."""
