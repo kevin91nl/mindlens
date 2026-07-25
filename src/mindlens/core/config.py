@@ -32,21 +32,49 @@ class Config:
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls, env_path: Path | None = None) -> Config:
-        """Load config from .env file."""
+    def _find_vault(cls) -> Path:
+        """Auto-discover vault by looking for AGENTS.md in known locations.
+        
+        Priority: env var > Proton Drive > iCloud > ~/mindlens > cwd
+        Only matches directories that are NOT the git repo itself.
+        """
+        env_path = os.environ.get("MINDLENS_VAULT_PATH", "")
+        candidates = [
+            Path.home() / "Library" / "CloudStorage" / "ProtonDrive-kevjac91@proton.me-folder" / "mindlens",
+            Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "mindlens",
+            Path.home() / "mindlens",
+            Path.home() / "Documents" / "mindlens",
+        ]
+        # If env var is set, try it first
         if env_path:
+            candidates.insert(0, Path(env_path))
+
+        for p in candidates:
+            if p and p.exists() and (p / "AGENTS.md").exists():
+                return p
+        return Path.home() / "mindlens"
+
+    @classmethod
+    def from_env(cls, env_path: Path | None = None) -> Config:
+        """Load config from .env file. Auto-discovers vault if not set."""
+        vault = cls._find_vault()
+
+        # Load .env from vault (single source of truth)
+        vault_env = vault / ".env"
+        if vault_env.exists():
+            load_dotenv(vault_env)
+        elif env_path:
             load_dotenv(env_path)
         else:
-            # Try vault path first, then cwd
-            for candidate in [
-                Path(os.environ.get("MINDLENS_VAULT_PATH", "")) / ".env",
-                Path.cwd() / ".env",
-            ]:
+            for candidate in [Path.cwd() / ".env", Path.home() / ".env"]:
                 if candidate.exists():
                     load_dotenv(candidate)
                     break
 
-        vault = Path(os.environ.get("MINDLENS_VAULT_PATH", str(Path.home() / "mindlens")))
+        # Re-check vault path after loading .env
+        env_vault = os.environ.get("MINDLENS_VAULT_PATH")
+        if env_vault:
+            vault = Path(env_vault)
 
         return cls(
             llm_provider=os.environ.get("MINDLENS_LLM_PROVIDER", "openrouter"),

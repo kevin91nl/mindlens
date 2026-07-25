@@ -63,8 +63,11 @@ MindLens Core
 pip install mindlens
 ```
 
+MindLens auto-discovers your vault. Put `.env` in your vault:
+
 ```bash
-# Configure
+# Your vault (auto-discovered via Proton Drive, iCloud, or ~/mindlens)
+cd ~/mindlens-vault
 cp .env.example .env
 nano .env
 ```
