@@ -351,6 +351,7 @@ class Agent(abc.ABC):
         *,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        tools: list[dict] | None = None,
     ) -> tuple[str, int, int]:
         """Helper: send a system+user message to the LLM. Returns (content, in_tokens, out_tokens)."""
         response = await self.llm.complete(
@@ -360,6 +361,7 @@ class Agent(abc.ABC):
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            tools=tools,
         )
         return response.content, response.input_tokens, response.output_tokens
 

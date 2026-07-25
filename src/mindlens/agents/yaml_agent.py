@@ -61,12 +61,16 @@ class YamlAgent(Agent):
         if tool_data:
             user_message += f"\nBeschikbare data:\n{tool_data}"
 
-        # Call LLM with the YAML-defined system prompt
-        content, in_tok, out_tok = await self._llm_complete(
-            self._system_prompt,
-            user_message,
-            temperature=0.3,
-        )
+        # Call LLM — use agentic loop if mode=agentic, else single call
+        mode = self._config.get("mode", "single")
+        if mode == "agentic":
+            content, in_tok, out_tok = await self._agentic_loop(
+                self._system_prompt, user_message, context
+            )
+        else:
+            content, in_tok, out_tok = await self._llm_complete(
+                self._system_prompt, user_message, temperature=0.3,
+            )
 
         # Post-process: create GitHub issues if LLM suggested them
         created_issues = await self._create_issues_from_response(content)
@@ -291,6 +295,109 @@ class YamlAgent(Agent):
 
         return "\n\n".join(data_parts) if data_parts else ""
 
+    async def _agentic_loop(
+        self, system_prompt: str, user_message: str, context: AgentContext, max_steps: int = 5
+    ) -> tuple[str, int, int]:
+        """Agentic loop using native function calling (OpenAI-compatible).
+        
+        LLM calls tools via API. We execute, feed results back.
+        No tool calls = LLM is done.
+        """
+        project = str(Path.home() / "projects" / "mindlens")
+
+        # Define the bash tool in OpenAI function calling format
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "description": "Execute a bash command and return stdout/stderr",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "The bash command to execute"
+                            }
+                        },
+                        "required": ["command"]
+                    }
+                }
+            }
+        ]
+
+        messages = [
+            {"role": "system", "content": f"{system_prompt}\n\nProject: {project}"},
+            {"role": "user", "content": user_message},
+        ]
+        total_in, total_out = 0, 0
+        last_content = ""
+
+        for step in range(max_steps):
+            response = await self.llm.complete(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=4096,
+                tools=tools,
+            )
+            total_in += response.input_tokens
+            total_out += response.output_tokens
+
+            choice_msg = {
+                "role": "assistant",
+                "content": response.content,
+            }
+            if response.tool_calls:
+                choice_msg["tool_calls"] = response.tool_calls
+            messages.append(choice_msg)
+
+            if not response.tool_calls:
+                # No tool calls = done
+                return response.content, total_in, total_out
+
+            # Execute each tool call
+            for tc in response.tool_calls:
+                func = tc.get("function", {})
+                func_name = func.get("name", "")
+                import json as _json
+                try:
+                    args = _json.loads(func.get("arguments", "{}"))
+                except _json.JSONDecodeError:
+                    args = {}
+
+                if func_name == "bash":
+                    cmd = args.get("command", "")
+                    try:
+                        result = subprocess.run(
+                            cmd, shell=True, capture_output=True,
+                            text=True, timeout=30, cwd=project,
+                        )
+                        out = result.stdout.strip()
+                        if result.returncode != 0 and result.stderr:
+                            out += f"\nERR: {result.stderr.strip()[:500]}"
+                        lines = (out or "(no output)").splitlines()
+                        if len(lines) > 30:
+                            out = "\n".join(lines[:30]) + f"\n... ({len(lines)-30} more)"
+                    except subprocess.TimeoutExpired:
+                        out = "(timeout 30s)"
+                    except Exception as e:
+                        out = f"(error: {e})"
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": out,
+                    })
+                else:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": f"Unknown tool: {func_name}",
+                    })
+
+            last_content = response.content
+
+        return last_content, total_in, total_out
 
     async def _execute_bash_tool(self, tool_def: dict, context: AgentContext) -> str:
         """Execute a bash tool defined in YAML."""
