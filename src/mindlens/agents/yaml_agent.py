@@ -159,6 +159,14 @@ class YamlAgent(Agent):
         if not title:
             return None
 
+        # Reject template placeholders
+        if "{" in title or "}" in title or title.lower() in ("title", "description", "todo"):
+            return None
+
+        description = data.get("description", "")
+        if "{" in description[:20] or description.lower() in ("description", "todo"):
+            return None
+
         if any(k in data for k in ("severity", "description", "suggested_fix")):
             labels = data.get("labels", ["bug"])
             body = f"## Auto-detected by {self.name}\n\n{data.get('description', '')}\n\n"
