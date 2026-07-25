@@ -227,6 +227,12 @@ class YamlAgent(Agent):
         # Post-process: execute triage actions (close/comment/label) from LLM output
         triage_actions = await self._execute_triage_actions(content)
 
+        # Auto-close fallback: if agent has auto_close_on_no_action and no actions taken
+        if not triage_actions and self._config.get("auto_close_on_no_action"):
+            closed = await self._auto_close_fallback(context, content)
+            if closed:
+                triage_actions.extend(closed)
+
         output = content
         if created_issues:
             output += "\n\n---\n📋 GitHub issues created:\n"
@@ -416,6 +422,41 @@ class YamlAgent(Agent):
                 continue
             except Exception as e:
                 logger.debug("Triage action failed: %s", e)
+
+        return results
+
+    async def _auto_close_fallback(self, context: AgentContext, content: str) -> list[str]:
+        """Auto-close issue if agent ran out of steps without taking action."""
+        import re
+        import subprocess as _sub
+        results = []
+
+        # Check if content mentions a commit (agent fixed something)
+        if "commit" in content.lower() or "closes #" in content.lower():
+            return results
+
+        # Get the current open issue number from GitHub
+        try:
+            r = _sub.run(
+                "gh issue list --repo kevin91nl/mindlens --label triaged --label bug --state open --limit 1 --json number",
+                shell=True, capture_output=True, text=True, timeout=15,
+            )
+            import json as _json
+            issues = _json.loads(r.stdout) if r.stdout.strip() else []
+            if not issues:
+                return results
+            number = str(issues[0]["number"])
+        except Exception:
+            return results
+
+        reason = "Auto-closed: agent exhausted steps without fix or triage action."
+
+        logger.info("[auto_close] Closing #%s via fallback", number)
+        try:
+            await self._run_bash_tool("close_issue", {"number": number, "reason": reason})
+            results.append(f"❌ #{number} auto-gesloten (fallback)")
+        except Exception as e:
+            logger.debug("[auto_close] Failed: %s", e)
 
         return results
 
