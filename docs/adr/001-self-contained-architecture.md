@@ -6,7 +6,7 @@
 
 ## Context
 
-MindLens is an AI-native holding company operating system. It manages multiple autonomous workspaces (PhD, Tuvia, RiskStudio), each with their own knowledge base, agent swarms, and code repos. The system must be self-contained — all configuration, skills, instructions, and knowledge live inside the vault.
+MindLens is an AI-native operating system for understanding and orchestrating artificial minds. It manages multiple autonomous workspaces (PhD, Tuvia, RiskStudio), each with their own knowledge base, agent swarms, and code repos. The system must be self-contained — all configuration, skills, instructions, and knowledge live inside the vault.
 
 ## Decision
 

@@ -31,6 +31,8 @@ Instead of one monolithic AI, you get a team:
 - Agents that research competitors and market gaps
 - All coordinated through a single Telegram interface
 
+Think of it as a **holding company where AI agents are the employees**.
+
 ## Architecture
 
 ```
