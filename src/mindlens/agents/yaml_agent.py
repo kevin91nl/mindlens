@@ -71,18 +71,25 @@ class YamlAgent(Agent):
         # Post-process: create GitHub issues if LLM suggested them
         created_issues = await self._create_issues_from_response(content)
 
+        # Post-process: execute triage actions (close/comment/label) from LLM output
+        triage_actions = await self._execute_triage_actions(content)
+
         output = content
         if created_issues:
             output += "\n\n---\n📋 GitHub issues aangemaakt:\n"
             for issue_url in created_issues:
                 output += f"  ✅ {issue_url}\n"
+        if triage_actions:
+            output += "\n\n---\n🔧 Triage acties uitgevoerd:\n"
+            for action in triage_actions:
+                output += f"  {action}\n"
 
         return AgentResult(
             success=True,
             output=output,
             input_tokens=in_tok,
             output_tokens=out_tok,
-            metadata={"created_issues": created_issues},
+            metadata={"created_issues": created_issues, "triage_actions": triage_actions},
         )
 
     async def _create_issues_from_response(self, content: str) -> list[str]:
@@ -163,15 +170,95 @@ class YamlAgent(Agent):
             return self.create_github_issue(title, body, labels)
         return None
 
+    async def _execute_triage_actions(self, content: str) -> list[str]:
+        """Parse LLM output for triage actions and execute bash tools."""
+        import re
+        results = []
+
+        # Find JSON arrays in the output
+        json_blocks = re.findall(r'```(?:json)?\s*(\[.+?\])\s*```', content, re.DOTALL)
+        if not json_blocks:
+            # Try inline JSON array
+            json_blocks = re.findall(r'\[\s*\{[^]]+\}\s*\]', content, re.DOTALL)
+
+        for block in json_blocks:
+            try:
+                actions = json.loads(block)
+                if not isinstance(actions, list):
+                    continue
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    act = action.get("action", "")
+                    number = action.get("number")
+                    if not number:
+                        continue
+
+                    if act == "close":
+                        reason = action.get("reason", "triage: gesloten")
+                        result = await self._run_bash_tool("close_issue", {"number": str(number), "reason": reason})
+                        results.append(f"❌ #{number} gesloten: {reason}")
+
+                    elif act == "comment":
+                        comment = action.get("comment", action.get("reason", ""))
+                        result = await self._run_bash_tool("comment_issue", {"number": str(number), "comment": comment})
+                        results.append(f"💬 #{number} comment geplaatst")
+
+                    elif act == "label":
+                        label = action.get("label", action.get("labels_added", ["triaged"])[0] if action.get("labels_added") else "triaged")
+                        result = await self._run_bash_tool("label_issue", {"number": str(number), "label": label})
+                        results.append(f"🏷️ #{number} gelabeled: {label}")
+
+                    elif act == "keep":
+                        # Add acceptance criteria if provided
+                        if action.get("criteria_added") or action.get("acceptatie_criteria"):
+                            criteria = action.get("acceptatie_criteria", action.get("criteria", ""))
+                            if criteria:
+                                result = await self._run_bash_tool("comment_issue", {"number": str(number), "comment": criteria})
+                                results.append(f"✅ #{number} acceptatie criteria toegevoegd")
+                        # Add labels
+                        for label in action.get("labels_added", []):
+                            result = await self._run_bash_tool("label_issue", {"number": str(number), "label": label})
+                            results.append(f"🏷️ #{number} gelabeled: {label}")
+
+            except json.JSONDecodeError:
+                continue
+            except Exception as e:
+                logger.debug("Triage action failed: %s", e)
+
+        return results
+
+    async def _run_bash_tool(self, tool_name: str, variables: dict) -> str:
+        """Run a named bash tool with variables."""
+        for tool in self._tools:
+            if isinstance(tool, dict) and tool.get("name") == tool_name:
+                # Substitute variables in command
+                command = tool.get("command", "")
+                for key, value in variables.items():
+                    command = command.replace(f"{{{key}}}", str(value))
+                # Also substitute standard variables
+                command = command.replace("{vault_path}", str(self.config.vault_path))
+                command = command.replace("{project_path}", str(Path.home() / "projects" / "mindlens"))
+                # Execute
+                tool_copy = dict(tool)
+                tool_copy["command"] = command
+                return await self._execute_bash_tool(tool_copy, AgentContext(task=""))
+        return ""
+
     async def _gather_tool_data(self, context: AgentContext) -> str:
         """Gather data from configured tools."""
         data_parts = []
 
         for tool in self._tools:
             try:
-                result = await self._execute_tool(tool, context)
+                if isinstance(tool, dict):
+                    name = tool.get("name", "bash")
+                    result = await self._execute_bash_tool(tool, context)
+                else:
+                    name = tool
+                    result = await self._execute_tool(tool, context)
                 if result:
-                    data_parts.append(f"### {tool}\n{result}")
+                    data_parts.append(f"### {name}\n{result}")
             except Exception as e:
                 logger.debug("Tool %s failed: %s", tool, e)
 
