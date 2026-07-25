@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -205,6 +207,15 @@ class YamlAgent(Agent):
 
         elif tool_name == "query_agent_runs":
             return self._query_agent_runs(context)
+
+        elif tool_name == "run_command":
+            return self._run_command(context)
+
+        elif tool_name == "check_structure":
+            return self._check_structure()
+
+        elif tool_name == "verify_config":
+            return self._verify_config()
 
         return ""
 
@@ -475,6 +486,138 @@ class YamlAgent(Agent):
             return None
         except Exception:
             return None
+
+    def _run_command(self, context: AgentContext) -> str:
+        """Run a shell command and return output."""
+        # Extract command from task
+        task = context.task
+        # Look for command patterns
+        if "install" in task.lower():
+            return self._check_install_script()
+        elif "cli" in task.lower() or "status" in task.lower():
+            project = Path.home() / "projects" / "mindlens"
+            try:
+                result = subprocess.run(
+                    ["uv", "run", "mindlens-cli", "status"],
+                    capture_output=True, text=True, timeout=15, cwd=str(project),
+                )
+                return result.stdout[:2000]
+            except Exception as e:
+                return f"CLI error: {e}"
+        return ""
+
+    def _check_structure(self) -> str:
+        """Check the vault and project structure for completeness."""
+        vault = self.config.vault_path
+        project = Path.home() / "projects" / "mindlens"
+        issues = []
+
+        # Check vault structure
+        vault_expected = {
+            "CONTEXT.md": "file",
+            "AGENTS.md": "file",
+            "README.md": "file",
+            "tasks.yaml": "file",
+            "issues.yaml": "file",
+            "repos.yaml": "file",
+            "agents/": "dir",
+            "docs/adr/": "dir",
+        }
+        for item, kind in vault_expected.items():
+            path = vault / item
+            if kind == "file" and not path.is_file():
+                issues.append(f"Vault missing: {item}")
+            elif kind == "dir" and not path.is_dir():
+                issues.append(f"Vault missing dir: {item}")
+
+        # Check project structure
+        project_expected = {
+            "pyproject.toml": "file",
+            "install.sh": "file",
+            "README.md": "file",
+            "AGENTS.md": "file",
+            ".env.example": "file",
+            ".gitignore": "file",
+            "src/mindlens/": "dir",
+            "src/mindlens/core/": "dir",
+            "src/mindlens/agents/": "dir",
+            "docs/adr/": "dir",
+        }
+        for item, kind in project_expected.items():
+            path = project / item
+            if kind == "file" and not path.is_file():
+                issues.append(f"Project missing: {item}")
+            elif kind == "dir" and not path.is_dir():
+                issues.append(f"Project missing dir: {item}")
+
+        # Check .env.example has required vars
+        env_example = project / ".env.example"
+        if env_example.exists():
+            content = env_example.read_text()
+            required_vars = ["MINDLENS_LLM_API_KEY", "MINDLENS_TELEGRAM_TOKEN", "MINDLENS_VAULT_PATH"]
+            for var in required_vars:
+                if var not in content:
+                    issues.append(f".env.example missing: {var}")
+
+        # Check install.sh is executable
+        install = project / "install.sh"
+        if install.exists() and not os.access(str(install), os.X_OK):
+            issues.append("install.sh is not executable")
+
+        if not issues:
+            return "✅ Structuur is compleet en correct."
+
+        return "⚠️ Structuur problemen:\n" + "\n".join(f"- {i}" for i in issues)
+
+    def _verify_config(self) -> str:
+        """Verify .env configuration is valid."""
+        project = Path.home() / "projects" / "mindlens"
+        issues = []
+
+        env_example = project / ".env.example"
+        if not env_example.exists():
+            issues.append(".env.example niet gevonden")
+        else:
+            content = env_example.read_text()
+            # Check for real values (should be placeholders)
+            if re.search(r'sk-or-v1-[a-zA-Z0-9]{20,}', content):
+                issues.append("CRITICAL: Echte API key in .env.example!")
+            if "8757887592" in content:
+                issues.append("CRITICAL: Echte Telegram token in .env.example!")
+
+        # Check pyproject.toml
+        pyproject = project / "pyproject.toml"
+        if pyproject.exists():
+            content = pyproject.read_text()
+            if "mindlens" not in content:
+                issues.append("pyproject.toml mist project naam")
+
+        if not issues:
+            return "✅ Configuratie is correct."
+
+        return "⚠️ Configuratie problemen:\n" + "\n".join(f"- {i}" for i in issues)
+
+    def _check_install_script(self) -> str:
+        """Check if install.sh is complete and correct."""
+        project = Path.home() / "projects" / "mindlens"
+        install = project / "install.sh"
+
+        if not install.exists():
+            return "❌ install.sh niet gevonden"
+
+        content = install.read_text()
+        issues = []
+
+        # Check for required steps
+        required = ["uv sync", ".env.example", "MINDLENS_VAULT_PATH"]
+        for r in required:
+            if r not in content:
+                issues.append(f"install.sh mist: {r}")
+
+        if not issues:
+            return "✅ install.sh is compleet."
+
+        return "⚠️ install.sh problemen:\n" + "\n".join(f"- {i}" for i in issues)
 
 
 def discover_yaml_agents(vault_path: Path) -> list[Path]:
