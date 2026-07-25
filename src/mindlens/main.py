@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -80,7 +81,10 @@ class MindLens:
         # 4. Subscribe to events
         self._setup_event_handlers()
 
-        # 5. Start file watcher (pass the running loop)
+        # 5. Discover event-driven agent triggers from YAML definitions
+        self._setup_yaml_event_triggers()
+
+        # 6. Start file watcher (pass the running loop)
         loop = asyncio.get_running_loop()
         self.file_watcher.start(loop=loop)
 
@@ -195,6 +199,66 @@ class MindLens:
         # Log all events
         self.event_bus.subscribe("*", self._log_event)
 
+    def _setup_yaml_event_triggers(self) -> None:
+        """Discover event subscriptions from YAML agent definitions."""
+        import yaml as _yaml
+
+        yaml_paths = discover_yaml_agents(self.config.vault_path)
+        for yaml_path in yaml_paths:
+            try:
+                data = _yaml.safe_load(yaml_path.read_text()) or {}
+                events = data.get("events") or []
+                if not events:
+                    continue
+
+                agent_name = data.get("name", yaml_path.stem)
+                for event_topic in events:
+                    self.event_bus.subscribe(
+                        event_topic,
+                        self._make_yaml_event_handler(agent_name, event_topic),
+                    )
+                    logger.info("YAML event trigger: %s → %s", event_topic, agent_name)
+
+            except Exception as e:
+                logger.debug("Failed to parse YAML events from %s: %s", yaml_path, e)
+
+    def _make_yaml_event_handler(self, agent_name: str, event_topic: str):
+        """Create an event handler for a YAML agent trigger."""
+        async def handler(event: Event) -> None:
+            logger.info("Event %s triggered YAML agent: %s", event_topic, agent_name)
+
+            agent = self.registry.create(
+                agent_name,
+                llm=self.llm,
+                event_bus=self.event_bus,
+                config=self.config,
+            )
+            if not agent:
+                logger.warning("YAML agent '%s' not found for event %s", agent_name, event_topic)
+                return
+
+            # Build task from event data
+            task = f"Event '{event_topic}' ontvangen van {event.source}. Data: {json.dumps(event.data)[:500]}"
+            context = AgentContext(task=task, workspace=event.data.get("workspace"))
+
+            try:
+                result = await agent.run(context)
+
+                # Check notification level from YAML
+                data = _yaml.safe_load(agent.yaml_path.read_text()) if hasattr(agent, 'yaml_path') else {}
+                notify = (data or {}).get("notify", "summary") if data else "summary"
+
+                if notify == "full":
+                    await self.telegram.send_message(result.output)
+                elif notify == "summary":
+                    await self.telegram.send_message(f"✅ {agent_name} triggered by {event_topic}")
+                # silent = no notification
+
+            except Exception:
+                logger.exception("YAML agent %s failed on event %s", agent_name, event_topic)
+
+        return handler
+
     async def _handle_telegram_message(self, event: Event) -> None:
         """Stream CoS response to Telegram. Routing handled via event bus."""
         text = event.data.get("text", "")
@@ -220,9 +284,21 @@ class MindLens:
                 workspace,
             )
 
+            # Publish agent run event (triggers YAML agents)
+            await self.event_bus.publish(Event(
+                topic="agent_run.completed",
+                source="chief_of_staff",
+                data={"workspace": workspace, "task": text, "success": True},
+            ))
+
         except Exception:
             logger.exception("Telegram message handler failed")
             await self.telegram.send_message("❌ Fout bij verwerken van je bericht.")
+            await self.event_bus.publish(Event(
+                topic="agent_run.failed",
+                source="chief_of_staff",
+                data={"workspace": workspace, "task": text, "success": False},
+            ))
 
     async def _handle_agent_route(self, event: Event) -> None:
         """Handle routing events from Chief of Staff."""
