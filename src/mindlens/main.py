@@ -27,6 +27,7 @@ from mindlens.core.config import Config
 from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
 from mindlens.core.event_bus import Event, EventBus
 from mindlens.core.file_watcher import FileWatcher
+from mindlens.core.hot_reload import AgentHotReloader, AgentDefinition
 from mindlens.core.llm import LLMClient
 from mindlens.core.scheduler import Scheduler
 from mindlens.core.telegram import TelegramBot
@@ -56,6 +57,12 @@ class MindLens:
         self.telegram = TelegramBot(config, self.event_bus)
         self.file_watcher = FileWatcher(self.event_bus, config.vault_path)
         self.scheduler = Scheduler(config.vault_path, self._handle_scheduled_task)
+        self.hot_reloader = AgentHotReloader(
+            vault_path=config.vault_path,
+            on_agent_added=self._on_agent_added,
+            on_agent_changed=self._on_agent_changed,
+            on_agent_removed=self._on_agent_removed,
+        )
 
         self._core_db = None
         self._workspace_dbs: dict[str, object] = {}
@@ -88,6 +95,9 @@ class MindLens:
         loop = asyncio.get_running_loop()
         self.file_watcher.start(loop=loop)
 
+        # 6b. Start agent hot-reloader
+        self.hot_reloader.start(loop=loop)
+
         # 6. Start Telegram bot
         await self.telegram.start()
 
@@ -107,6 +117,7 @@ class MindLens:
         """Graceful shutdown."""
         logger.info("🧠 MindLens shutting down...")
         self.scheduler.stop()
+        self.hot_reloader.stop()
         self.file_watcher.stop()
         await self.telegram.stop()
         await self.llm.close()
@@ -115,6 +126,68 @@ class MindLens:
         for db in self._workspace_dbs.values():
             await db.close()
         logger.info("🧠 MindLens stopped.")
+
+    # --- Hot-reload callbacks ---
+
+    def _on_agent_added(self, defn: AgentDefinition) -> None:
+        """Called when a new YAML agent definition is created."""
+        logger.info("🔥 Hot-reload: new agent '%s'", defn.name)
+
+        # Register as YAML agent
+        from mindlens.agents.yaml_agent import YamlAgent
+        if defn.name not in self.registry._agents:
+            self.registry._agents[defn.name] = type(
+                f"YamlAgent_{defn.name}",
+                (YamlAgent,),
+                {"_yaml_path": defn.path, "name": defn.name, "description": defn.description, "capabilities": defn.capabilities},
+            )
+
+        # Subscribe to events
+        for event_topic in defn.events:
+            self.event_bus.subscribe(
+                event_topic,
+                self._make_yaml_event_handler(defn.name, event_topic),
+            )
+            logger.info("  Subscribed: %s → %s", event_topic, defn.name)
+
+        # Reload scheduler
+        self.scheduler.load_tasks()
+
+        # Notify via Telegram
+        asyncio.create_task(self.telegram.send_message(
+            f"🔥 Nieuwe agent actief: {defn.name}\n{defn.description}"
+        ))
+
+    def _on_agent_changed(self, defn: AgentDefinition) -> None:
+        """Called when a YAML agent definition is modified."""
+        logger.info("🔄 Hot-reload: agent '%s' changed", defn.name)
+
+        # Re-register
+        from mindlens.agents.yaml_agent import YamlAgent
+        self.registry._agents[defn.name] = type(
+            f"YamlAgent_{defn.name}",
+            (YamlAgent,),
+            {"_yaml_path": defn.path, "name": defn.name, "description": defn.description, "capabilities": defn.capabilities},
+        )
+
+        # Reload scheduler
+        self.scheduler.load_tasks()
+
+    def _on_agent_removed(self, name: str) -> None:
+        """Called when a YAML agent definition is deleted."""
+        logger.info("❌ Hot-reload: agent '%s' removed", name)
+
+        # Unregister
+        if name in self.registry._agents:
+            del self.registry._agents[name]
+
+        # Reload scheduler
+        self.scheduler.load_tasks()
+
+        # Notify
+        asyncio.create_task(self.telegram.send_message(
+            f"❌ Agent verwijderd: {name}"
+        ))
 
     async def _handle_scheduled_task(self, agent_name: str, workspace: str, message: str) -> None:
         """Execute a scheduled task by running an agent."""
