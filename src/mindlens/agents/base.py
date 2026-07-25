@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import traceback
 import json
 import logging
 import uuid
@@ -38,6 +39,8 @@ class AgentResult:
     skills_useful: list[str] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
+    error_traceback: str | None = None
 
 
 class Agent(abc.ABC):

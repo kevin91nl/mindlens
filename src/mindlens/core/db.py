@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     skills_useful TEXT DEFAULT '[]',
     duration_seconds REAL,
     success BOOLEAN DEFAULT 1,
+    error_message TEXT,
+    error_traceback TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -109,15 +111,19 @@ async def record_agent_run(
     skills_useful: str,
     duration_seconds: float,
     success: bool,
+    error_message: str | None = None,
+    error_traceback: str | None = None,
 ) -> None:
     """Record an agent run in the core database."""
     await conn.execute(
         """INSERT INTO agent_runs
            (id, agent_name, workspace, task_description, input_tokens, output_tokens,
-            cost_usd, skills_loaded, skills_useful, duration_seconds, success)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            cost_usd, skills_loaded, skills_useful, duration_seconds, success,
+            error_message, error_traceback)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (run_id, agent_name, workspace, task_description,
          input_tokens, output_tokens, cost_usd,
-         skills_loaded, skills_useful, duration_seconds, success),
+         skills_loaded, skills_useful, duration_seconds, success,
+         error_message, error_traceback),
     )
     await conn.commit()
