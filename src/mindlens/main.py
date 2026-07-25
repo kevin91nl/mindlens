@@ -14,7 +14,6 @@ from mindlens.agents.agent_optimizer import AgentOptimizer
 from mindlens.agents.base import AgentContext, AgentRegistry
 from mindlens.agents.chief_of_staff import ChiefOfStaff
 from mindlens.agents.workspace_manager import WorkspaceManager
-from mindlens.agents.vscode_session_agent import VSCodeSessionAgent
 from mindlens.agents.session_observer import SessionObserver
 from mindlens.agents.efficiency_analyst import EfficiencyAnalyst
 from mindlens.agents.reflector import Reflector
@@ -22,6 +21,7 @@ from mindlens.agents.memory_manager import MemoryManager
 from mindlens.agents.test_runner import TestRunner
 from mindlens.agents.bug_hunter import BugHunter
 from mindlens.agents.security_red_team import SecurityRedTeam
+from mindlens.agents.code_agent import CodeAgent
 from mindlens.agents.yaml_agent import YamlAgent, discover_yaml_agents
 from mindlens.core.config import Config
 from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
@@ -154,7 +154,6 @@ class MindLens:
             AgentArchitect,
             AgentOptimizer,
             AgentLibrarian,
-            VSCodeSessionAgent,
             SessionObserver,
             EfficiencyAnalyst,
             Reflector,
@@ -162,6 +161,7 @@ class MindLens:
             TestRunner,
             BugHunter,
             SecurityRedTeam,
+            CodeAgent,
         ]
         for agent_cls in core_agents:
             self.registry.register(agent_cls)

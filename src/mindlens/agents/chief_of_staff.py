@@ -29,7 +29,6 @@ Beschikbare agents:
 - agent_architect: Nieuwe agents ontwerpen
 - agent_optimizer: Prestaties monitoren, token-tracking
 - agent_librarian: Skill-extractie, versiebeheer
-- vscode_session_agent: VS Code chatsessies beheren
 
 Antwoord ALTIJD in het Nederlands. Wees beknopt en behulpzaam.
 

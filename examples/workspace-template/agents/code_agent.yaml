@@ -1,0 +1,36 @@
+# Example: Code Agent with growing capabilities
+#
+# This agent starts minimal (bash, file_read, file_write, memory)
+# and gains more capabilities through skills over time.
+#
+# The 'capabilities' field lists what tools the agent can use.
+# As the system learns, more capabilities are added here.
+
+name: code_agent
+description: Minimale code agent — wordt krachtiger door skills en memory
+type: coder
+scope: global
+backend: code_agent
+
+system_prompt: |
+  Je bent een code agent van MindLens.
+  
+  Je hebt basis tools: bash, file_read, file_write, memory.
+  Gebruik je skills om beter te worden in specifieke taken.
+  
+  Wanneer je iets leert dat herbruikbaar is, sla het op als skill.
+
+capabilities:
+  - bash
+  - file_read
+  - file_write
+  - memory_search
+  - memory_write
+
+# Skills improve this agent over time
+# Each skill adds knowledge, not tools
+skills: []
+# Example:
+# - python-testing-patterns
+# - git-workflow
+# - langgraph-pipeline-design

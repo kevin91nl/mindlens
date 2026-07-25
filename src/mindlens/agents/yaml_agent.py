@@ -18,7 +18,6 @@ from typing import Any
 import yaml
 
 from mindlens.agents.base import Agent, AgentContext, AgentResult
-from mindlens.core.vscode_sessions import VSCodeSessionReader
 
 logger = logging.getLogger(__name__)
 
@@ -91,26 +90,6 @@ class YamlAgent(Agent):
     async def _execute_tool(self, tool_name: str, context: AgentContext) -> str:
         """Execute a tool and return its output."""
         vault = self.config.vault_path
-
-        if tool_name == "list_sessions":
-            reader = VSCodeSessionReader()
-            sessions = reader.list_sessions(limit=10)
-            if not sessions:
-                return "Geen sessies gevonden."
-            output = ""
-            for s in sessions:
-                output += f"- {s.session_id[:8]} | {s.workspace_name} | {s.started[:16]} | {len(s.messages)} msgs | {s.first_message[:60]}\n"
-            return output
-
-        elif tool_name == "search_sessions":
-            reader = VSCodeSessionReader()
-            sessions = reader.search_sessions(context.task, limit=5)
-            if not sessions:
-                return "Geen sessies gevonden."
-            output = ""
-            for s in sessions:
-                output += f"- {s.session_id[:8]} | {s.workspace_name} | {s.first_message[:80]}\n"
-            return output
 
         elif tool_name == "list_agent_runs":
             import aiosqlite
