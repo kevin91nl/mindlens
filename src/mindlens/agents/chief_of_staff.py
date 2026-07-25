@@ -20,7 +20,7 @@ Jouw rol:
 - Beheer communicatie tussen workspaces
 
 Beschikbare workspaces:
-- PhD: Onderzoek & kennisdistillatie
+- Research: Onderzoek & kennisdistillatie (raw → wiki pipeline)
 - Tuvia: AI-gedreven businessontwikkeling
 - RiskStudio: Architectuurdocs & kwaliteitsbewaking
 
