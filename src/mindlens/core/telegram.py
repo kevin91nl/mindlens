@@ -28,6 +28,14 @@ class TelegramBot:
     def __init__(self, config: Config, event_bus: EventBus) -> None:
         self.config = config
         self.event_bus = event_bus
+
+    async def _emit_event(self, topic: str, data: dict) -> None:
+        """Emit an event to the event bus."""
+        await self.event_bus.publish(Event(
+            topic=topic,
+            source="telegram",
+            data=data,
+        ))
         self._app: Application | None = None
         self._current_workspace: str = "HQ"  # Default context
 
@@ -253,7 +261,6 @@ class TelegramBot:
         logger.info("Received Telegram message in [%s]: %r", self._current_workspace, text)
 
         # Publish event for the Chief of Staff to process
-        from mindlens.core.event_bus import Event
 
         await self.event_bus.publish(Event(
             topic="telegram.message",
@@ -308,7 +315,6 @@ class TelegramBot:
             return
 
         action = query.data
-        from mindlens.core.event_bus import Event
 
         await self.event_bus.publish(Event(
             topic="telegram.message",
@@ -328,8 +334,6 @@ class TelegramBot:
 
         photo = update.message.photo[-1]
         caption = update.message.caption or "Foto ontvangen"
-
-        from mindlens.core.event_bus import Event
         await self.event_bus.publish(Event(
             topic="telegram.media",
             source="telegram",
@@ -352,8 +356,6 @@ class TelegramBot:
 
         doc = update.message.document
         caption = update.message.caption or f"Document: {doc.file_name}"
-
-        from mindlens.core.event_bus import Event
         await self.event_bus.publish(Event(
             topic="telegram.media",
             source="telegram",
@@ -377,7 +379,6 @@ class TelegramBot:
             return
 
         audio = update.message.voice or update.message.audio
-        from mindlens.core.event_bus import Event
         await self.event_bus.publish(Event(
             topic="telegram.media",
             source="telegram",
@@ -399,7 +400,6 @@ class TelegramBot:
             return
 
         video = update.message.video
-        from mindlens.core.event_bus import Event
         await self.event_bus.publish(Event(
             topic="telegram.media",
             source="telegram",

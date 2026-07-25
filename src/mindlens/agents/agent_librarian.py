@@ -89,7 +89,7 @@ class AgentLibrarian(Agent):
         if workspace:
             skills_dir = self.config.workspace_path(workspace) / ".mindlens" / "skills"
         else:
-            skills_dir = self.config.global_skills_path()
+            skills_dir = self.config.global_skills_path
 
         skills_dir.mkdir(parents=True, exist_ok=True)
 
@@ -148,7 +148,7 @@ class AgentLibrarian(Agent):
         all_skills = []
 
         # Global
-        global_index = self.config.global_skills_path() / "index.yaml"
+        global_index = self.config.global_skills_path / "index.yaml"
         if global_index.exists():
             index = yaml.safe_load(global_index.read_text()) or {"skills": []}
             for s in index.get("skills", []):

@@ -131,7 +131,7 @@ class BugHunter(Agent):
 
         # 1. Check agent_runs for failures
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute("""
                 SELECT agent_name, workspace, task_description, success, duration_seconds
                 FROM agent_runs
@@ -151,7 +151,7 @@ class BugHunter(Agent):
             pass
 
         # 2. Check VS Code sessions for error patterns
-        sessions_dir = Path.home() / "Library" / "Application Support" / "Code" / "User" / "workspaceStorage" / "-14f87f1a" / "GitHub.copilot-chat" / "transcripts"
+        sessions_dir = self.config.copilot_transcripts_path
         if sessions_dir.exists():
             import re
             error_counts = {}
@@ -173,7 +173,7 @@ class BugHunter(Agent):
 
         # 3. Check for high token usage (potential waste)
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute("""
                 SELECT agent_name, workspace, task_description,
                        input_tokens + output_tokens as total_tokens, cost_usd

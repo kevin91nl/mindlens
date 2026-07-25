@@ -122,6 +122,31 @@ class Config:
         """Get the global scheduled tasks file (vault root)."""
         return self.vault_path / "tasks.yaml"
 
+    @property
+    def copilot_transcripts_path(self) -> Path | None:
+        """Auto-discover VS Code Copilot chat transcripts path."""
+        import platform
+        system = platform.system()
+        if system == "Darwin":
+            code_user = Path.home() / "Library" / "Application Support" / "Code" / "User"
+        elif system == "Linux":
+            code_user = Path.home() / ".config" / "Code" / "User"
+        elif system == "Windows":
+            code_user = Path.home() / "AppData" / "Roaming" / "Code" / "User"
+        else:
+            return None
+
+        ws_storage = code_user / "workspaceStorage"
+        if not ws_storage.exists():
+            return None
+
+        # Auto-discover: find first workspaceStorage ID with copilot-chat transcripts
+        for d in sorted(ws_storage.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            transcripts = d / "GitHub.copilot-chat" / "transcripts"
+            if transcripts.exists() and any(transcripts.glob("*.jsonl")):
+                return transcripts
+        return None
+
     def workspace_tasks_path(self, name: str) -> Path:
         """Get per-workspace tasks.yaml."""
         return self.vault_path / name / "tasks.yaml"

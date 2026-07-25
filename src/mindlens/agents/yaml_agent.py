@@ -527,6 +527,7 @@ class YamlAgent(Agent):
 
                 if func_name == "bash":
                     cmd = args.get("command", "")
+                    logger.info("[%s] step %d: bash %s", self.name, step, cmd[:200])
                     try:
                         result = subprocess.run(
                             cmd, shell=True, capture_output=True,
@@ -610,7 +611,7 @@ class YamlAgent(Agent):
         if tool_name == "list_agent_runs":
             import aiosqlite
             try:
-                conn = await aiosqlite.connect(str(self.config.core_db_path()))
+                conn = await aiosqlite.connect(str(self.config.core_db_path))
                 cursor = await conn.execute("""
                     SELECT agent_name, workspace, task_description, success,
                            input_tokens + output_tokens as tokens, cost_usd, duration_seconds
@@ -737,7 +738,7 @@ class YamlAgent(Agent):
         try:
             conn = None
             # Try to connect to core DB
-            db_path = self.config.core_db_path()
+            db_path = self.config.core_db_path
             if not db_path.exists():
                 return "Geen agent_runs database gevonden."
 

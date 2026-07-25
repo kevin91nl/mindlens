@@ -33,7 +33,7 @@ class AgentOptimizer(Agent):
     async def _performance_report(self) -> AgentResult:
         """Generate a performance report from agent_runs table."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute(
                 """SELECT agent_name, workspace,
                           COUNT(*) as runs,
@@ -72,7 +72,7 @@ class AgentOptimizer(Agent):
     async def _token_analysis(self) -> AgentResult:
         """Analyze token usage patterns."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute(
                 """SELECT DATE(created_at) as day,
                           SUM(input_tokens) as in_tok,
@@ -104,7 +104,7 @@ class AgentOptimizer(Agent):
     async def _suggest_improvements(self) -> AgentResult:
         """Analyze patterns and suggest improvements."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute(
                 """SELECT agent_name, skills_loaded, skills_useful, success
                    FROM agent_runs

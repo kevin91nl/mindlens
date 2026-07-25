@@ -320,7 +320,7 @@ class Agent(abc.ABC):
         agents = []
 
         # Global agents
-        global_dir = self.config.agents_path()
+        global_dir = self.config.agents_path
         if global_dir.exists():
             for f in sorted(global_dir.glob("*.yaml")):
                 data = yaml.safe_load(f.read_text()) or {}

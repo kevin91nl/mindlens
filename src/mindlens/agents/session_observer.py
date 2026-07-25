@@ -33,7 +33,7 @@ class SessionObserver(Agent):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._sessions_dir = Path.home() / "Library" / "Application Support" / "Code" / "User" / "workspaceStorage" / "-14f87f1a" / "GitHub.copilot-chat" / "transcripts"
+        self._sessions_dir = self.config.copilot_transcripts_path
 
     async def run(self, context: AgentContext) -> AgentResult:
         task = context.task.lower()
@@ -49,7 +49,7 @@ class SessionObserver(Agent):
 
     async def _analyze_recent_sessions(self) -> AgentResult:
         """Analyze recent sessions for patterns."""
-        if not self._sessions_dir.exists():
+        if not self._sessions_dir or not self._sessions_dir.exists():
             return AgentResult(success=True, output="Geen sessies gevonden.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
@@ -93,7 +93,7 @@ class SessionObserver(Agent):
 
     async def _analyze_waste(self) -> AgentResult:
         """Identify wasted tokens and time."""
-        if not self._sessions_dir.exists():
+        if not self._sessions_dir or not self._sessions_dir.exists():
             return AgentResult(success=True, output="Geen sessies gevonden.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
@@ -136,7 +136,7 @@ class SessionObserver(Agent):
 
     async def _analyze_errors(self) -> AgentResult:
         """Analyze error patterns across sessions."""
-        if not self._sessions_dir.exists():
+        if not self._sessions_dir or not self._sessions_dir.exists():
             return AgentResult(success=True, output="Geen sessies gevonden.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)

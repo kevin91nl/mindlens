@@ -42,7 +42,7 @@ class EfficiencyAnalyst(Agent):
     async def _daily_report(self) -> AgentResult:
         """Generate daily efficiency report."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
 
             # Today's stats
             cursor = await conn.execute("""
@@ -110,7 +110,7 @@ class EfficiencyAnalyst(Agent):
     async def _trend_analysis(self) -> AgentResult:
         """Analyze token/cost trends over time."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute("""
                 SELECT DATE(created_at) as day,
                        SUM(input_tokens) as in_tok,
@@ -153,7 +153,7 @@ class EfficiencyAnalyst(Agent):
     async def _waste_analysis(self) -> AgentResult:
         """Identify specific waste patterns."""
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute("""
                 SELECT agent_name, workspace, task_description,
                        input_tokens, output_tokens, cost_usd, duration_seconds, success

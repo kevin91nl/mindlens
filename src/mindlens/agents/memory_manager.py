@@ -56,7 +56,7 @@ class MemoryManager(Agent):
 
         # Save skill if it looks like one
         if "```" in content or "# " in content:
-            skills_dir = self.config.global_skills_path()
+            skills_dir = self.config.global_skills_path
             skills_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate name from content
@@ -91,7 +91,7 @@ class MemoryManager(Agent):
 
     async def _archive_stale_skills(self) -> AgentResult:
         """Find and archive skills that haven't been useful."""
-        skills_dir = self.config.global_skills_path()
+        skills_dir = self.config.global_skills_path
         index_path = skills_dir / "index.yaml"
 
         if not index_path.exists():
@@ -149,7 +149,7 @@ class MemoryManager(Agent):
         import aiosqlite
 
         try:
-            conn = await aiosqlite.connect(str(self.config.core_db_path()))
+            conn = await aiosqlite.connect(str(self.config.core_db_path))
             cursor = await conn.execute("""
                 SELECT agent_name, workspace, task_description, success, duration_seconds
                 FROM agent_runs

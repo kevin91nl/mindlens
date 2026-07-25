@@ -72,7 +72,7 @@ class MindLens:
         logger.info("🧠 MindLens booting...")
 
         # 1. Init databases
-        self._core_db = await init_core_db(self.config.core_db_path())
+        self._core_db = await init_core_db(self.config.core_db_path)
 
         # 2. Discover and load workspaces
         workspaces = self.workspace_registry.load_all()
