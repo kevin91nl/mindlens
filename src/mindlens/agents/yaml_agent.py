@@ -206,7 +206,174 @@ class YamlAgent(Agent):
             pages = [p.stem for p in wiki_dir.glob("*.md")]
             return f"Wiki pagina's in {ws}: {', '.join(pages)}" if pages else f"Geen wiki pagina's in {ws}."
 
+        elif tool_name == "search_code":
+            return self._search_code(context)
+
+        elif tool_name == "scan_python_imports":
+            return self._scan_python_imports()
+
+        elif tool_name == "check_yaml_consistency":
+            return self._check_yaml_consistency()
+
+        elif tool_name == "verify_vault_structure":
+            return self._verify_vault_structure()
+
+        elif tool_name == "check_dead_references":
+            return self._check_dead_references()
+
         return ""
+
+    def _search_code(self, context: AgentContext) -> str:
+        """Search for code patterns in the project."""
+        import subprocess
+        project = Path.home() / "projects" / "mindlens"
+        query = context.task[:50]
+        try:
+            result = subprocess.run(
+                ["grep", "-rn", "--include=*.py", query, str(project / "src")],
+                capture_output=True, text=True, timeout=10,
+            )
+            lines = result.stdout.strip().splitlines()[:10]
+            return "\n".join(lines) if lines else f"Geen resultaten voor '{query}'"
+        except Exception:
+            return "Zoekopdracht mislukt"
+
+    def _scan_python_imports(self) -> str:
+        """Check for broken Python imports."""
+        project = Path.home() / "projects" / "mindlens"
+        src = project / "src"
+        if not src.exists():
+            return "Geen src/ gevonden."
+
+        issues = []
+        for py_file in src.rglob("*.py"):
+            try:
+                content = py_file.read_text()
+                for line_num, line in enumerate(content.splitlines(), 1):
+                    stripped = line.strip()
+                    if stripped.startswith("from mindlens.") or stripped.startswith("import mindlens."):
+                        # Check if the module exists
+                        parts = stripped.replace("from ", "").replace("import ", "").split(".")
+                        module_path = src / "/".join(parts[:-1]) / "__init__.py"
+                        if not module_path.exists() and not (src / "/".join(parts)).with_suffix(".py").exists():
+                            issues.append(f"{py_file.name}:{line_num} — {stripped[:60]}")
+            except Exception:
+                continue
+
+        if not issues:
+            return "✅ Alle Python imports zijn geldig."
+
+        return "⚠️ Mogelijk gebroken imports:\n" + "\n".join(f"- {i}" for i in issues[:10])
+
+    def _check_yaml_consistency(self) -> str:
+        """Check if YAML agent definitions match Python agents."""
+        vault = self.config.vault_path
+        project = Path.home() / "projects" / "mindlens"
+        issues = []
+
+        # Check YAML agents reference valid tools
+        for yaml_path in discover_yaml_agents(vault):
+            try:
+                data = yaml.safe_load(yaml_path.read_text()) or {}
+                name = data.get("name", "?")
+                tools = data.get("tools", [])
+                for tool in tools:
+                    # Check if tool exists in yaml_agent.py
+                    yaml_agent_file = project / "src" / "mindlens" / "agents" / "yaml_agent.py"
+                    if yaml_agent_file.exists():
+                        content = yaml_agent_file.read_text()
+                        if f"tool_name == \"{tool}\"" not in content and tool not in ("read_file", "search_code"):
+                            issues.append(f"YAML agent '{name}' references tool '{tool}' not implemented")
+            except Exception:
+                continue
+
+        if not issues:
+            return "✅ YAML definities zijn consistent met Python code."
+
+        return "⚠️ Inconsistente YAML definities:\n" + "\n".join(f"- {i}" for i in issues[:10])
+
+    def _verify_vault_structure(self) -> str:
+        """Verify expected vault structure."""
+        vault = self.config.vault_path
+        issues = []
+
+        # Expected files at root
+        expected_root = ["CONTEXT.md", "AGENTS.md", "README.md", "tasks.yaml", "issues.yaml", "repos.yaml"]
+        for f in expected_root:
+            if not (vault / f).exists():
+                issues.append(f"Missing root file: {f}")
+
+        # Expected dirs at root
+        expected_dirs = ["agents", "docs", "docs/adr"]
+        for d in expected_dirs:
+            if not (vault / d).is_dir():
+                issues.append(f"Missing root directory: {d}")
+
+        # Check each workspace
+        for item in vault.iterdir():
+            if item.is_dir() and not item.name.startswith("."):
+                ws_issues = []
+                if not (item / "constitution.md").exists():
+                    ws_issues.append("constitution.md")
+                if not (item / "tasks.yaml").exists():
+                    ws_issues.append("tasks.yaml")
+                if not (item / "issues.yaml").exists():
+                    ws_issues.append("issues.yaml")
+                if not (item / "repos.yaml").exists():
+                    ws_issues.append("repos.yaml")
+                if not (item / "agents").is_dir():
+                    ws_issues.append("agents/")
+                if ws_issues:
+                    issues.append(f"Workspace '{item.name}' missing: {', '.join(ws_issues)}")
+
+        if not issues:
+            return "✅ Vault structuur is compleet."
+
+        return "⚠️ Ontbrekende bestanden:\n" + "\n".join(f"- {i}" for i in issues)
+
+    def _check_dead_references(self) -> str:
+        """Check for references to non-existent files or modules."""
+        vault = self.config.vault_path
+        project = Path.home() / "projects" / "mindlens"
+        issues = []
+
+        # Check repos.yaml references
+        repos_path = vault / "repos.yaml"
+        if repos_path.exists():
+            data = yaml.safe_load(repos_path.read_text()) or {}
+            for repo in data.get("repos") or []:
+                path = Path(repo.get("path", "")).expanduser()
+                if not path.exists():
+                    issues.append(f"repos.yaml: '{repo.get('name')}' path niet gevonden: {path}")
+
+        # Check workspace repos.yaml
+        for item in vault.iterdir():
+            if item.is_dir() and not item.name.startswith("."):
+                ws_repos = item / "repos.yaml"
+                if ws_repos.exists():
+                    data = yaml.safe_load(ws_repos.read_text()) or {}
+                    for repo in data.get("repos") or []:
+                        path = Path(repo.get("path", "")).expanduser()
+                        if not path.exists():
+                            issues.append(f"{item.name}/repos.yaml: '{repo.get('name')}' path niet gevonden: {path}")
+
+        # Check ADR references in CONTEXT.md
+        context_md = vault / "CONTEXT.md"
+        if context_md.exists():
+            import re
+            content = context_md.read_text()
+            links = re.findall(r'\[.*?\]\((.*?)\)', content)
+            for link in links:
+                if link.startswith("http"):
+                    continue
+                ref_path = vault / link
+                if not ref_path.exists():
+                    issues.append(f"CONTEXT.md: dode link '{link}'")
+
+        if not issues:
+            return "✅ Geen dode referenties gevonden."
+
+        return "❌ Dode referenties:\n" + "\n".join(f"- {i}" for i in issues)
 
     def create_github_issue(self, title: str, body: str, labels: list[str]) -> str | None:
         """Create a GitHub issue using gh CLI."""
