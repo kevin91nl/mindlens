@@ -38,7 +38,7 @@ class YamlAgent(Agent):
         self.scope = self._config.get("scope", "global")
 
         self._system_prompt = self._config.get("system_prompt", "")
-        self._tools = self._config.get("tools", [])
+        self._tools = self._config.get("tools") or []
         self._notify = self._config.get("notify", "summary")
         self._schedule = self._config.get("schedule")
 
