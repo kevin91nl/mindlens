@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -74,6 +75,9 @@ class Scheduler:
         self.handler = handler
         self._tasks: list[ScheduledTask] = []
         self._running = False
+        self._trigger_tasks: dict[str, asyncio.Task] = {}  # name → asyncio.Task
+        self._trigger_locks: dict[str, asyncio.Lock] = {}  # name → Lock
+        self._workspace_locks: dict[str, asyncio.Lock] = {}  # workspace → Lock for isolation
 
     def load_tasks(self) -> list[ScheduledTask]:
         """Load tasks from global, per-workspace tasks.yaml, and YAML agent definitions."""
@@ -172,11 +176,12 @@ class Scheduler:
         self.load_tasks()
         logger.info("Scheduler started. Checking every 60s.")
 
-        # Spawn trigger-based agents as persistent background tasks
+        # Spawn trigger-based agents as persistent background tasks (skip if already running)
         for task in self._tasks:
-            if task.enabled and task.trigger:
+            if task.enabled and task.trigger and task.name not in self._trigger_tasks:
                 logger.info("Spawning trigger agent: %s (every %ds)", task.name, task.trigger_interval)
-                asyncio.create_task(self._run_trigger_loop(task))
+                self._trigger_locks[task.name] = asyncio.Lock()
+                self._trigger_tasks[task.name] = asyncio.create_task(self._run_trigger_loop(task))
 
         while self._running:
             try:
@@ -185,25 +190,60 @@ class Scheduler:
                 logger.exception("Scheduler check failed")
             await asyncio.sleep(60)
 
+    def _get_workspace_lock(self, workspace: str) -> asyncio.Lock:
+        """Get or create a lock for a workspace to ensure isolation."""
+        if workspace not in self._workspace_locks:
+            self._workspace_locks[workspace] = asyncio.Lock()
+        return self._workspace_locks[workspace]
+
     async def _check_and_run(self) -> None:
-        """Check if any tasks should run now."""
+        """Check if any tasks should run now. Executes concurrently with workspace isolation."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         minute, hour, day, month, weekday = now.minute, now.hour, now.day, now.month, now.weekday()
 
+        # Collect tasks that should run now
+        tasks_to_run = []
         for task in self._tasks:
             if not task.enabled:
                 continue
             if task.matches_now(minute, hour, day, month, weekday):
-                logger.info("Running scheduled task: %s", task.name)
-                try:
+                tasks_to_run.append(task)
+
+        if not tasks_to_run:
+            return
+
+        # Execute tasks concurrently, but serialize per-workspace
+        async def _run_with_isolation(task: ScheduledTask) -> None:
+            correlation_id = str(uuid.uuid4())[:8]
+            lock = self._get_workspace_lock(task.workspace)
+            logger.info(
+                "Running scheduled task: %s (workspace=%s, correlation_id=%s)",
+                task.name, task.workspace, correlation_id,
+            )
+            try:
+                async with lock:
                     await self.handler(task.agent, task.workspace, task.message)
-                except Exception:
-                    logger.exception("Scheduled task %s failed", task.name)
+                logger.info(
+                    "Task completed: %s (correlation_id=%s)",
+                    task.name, correlation_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Scheduled task %s failed (workspace=%s, correlation_id=%s, message=%s)",
+                    task.name, task.workspace, correlation_id, task.message,
+                )
+
+        # Launch all tasks concurrently
+        await asyncio.gather(
+            *[_run_with_isolation(task) for task in tasks_to_run],
+            return_exceptions=True,
+        )
 
     async def _run_trigger_loop(self, task: ScheduledTask) -> None:
         """Trigger-based agent loop: run deterministic check, invoke agent only when work exists."""
         import subprocess as _sp
+        import time as _time
         logger.info("Trigger agent '%s' started (polling every %ds)", task.name, task.trigger_interval)
 
         while self._running:
@@ -217,10 +257,28 @@ class Scheduler:
 
                 if has_work:
                     logger.info("Trigger '%s': work detected, running agent", task.name)
+                    lock = self._trigger_locks.get(task.name)
+                    if lock and lock.locked():
+                        logger.info("Trigger '%s': already running, skipping", task.name)
+                        await asyncio.sleep(task.trigger_interval)
+                        continue
                     try:
-                        await self.handler(task.agent, task.workspace, task.message)
+                        start_time = _time.monotonic()
+                        if lock:
+                            async with lock:
+                                await self.handler(task.agent, task.workspace, task.message)
+                        else:
+                            await self.handler(task.agent, task.workspace, task.message)
+                        elapsed = _time.monotonic() - start_time
+                        logger.info(
+                            "Trigger agent '%s' completed (workspace=%s, elapsed=%.1fs)",
+                            task.name, task.workspace, elapsed,
+                        )
                     except Exception:
-                        logger.exception("Trigger agent '%s' failed", task.name)
+                        logger.exception(
+                            "Trigger agent '%s' failed (workspace=%s, trigger_cmd=%s, message=%s)",
+                            task.name, task.workspace, task.trigger, task.message,
+                        )
                     # Short cooldown before re-checking to avoid tight loops
                     await asyncio.sleep(10)
                     continue
@@ -229,10 +287,16 @@ class Scheduler:
                     await asyncio.sleep(task.trigger_interval)
 
             except _sp.TimeoutExpired:
-                logger.warning("Trigger '%s': check timed out", task.name)
+                logger.warning(
+                    "Trigger '%s': check timed out (workspace=%s, trigger_cmd=%s)",
+                    task.name, task.workspace, task.trigger,
+                )
                 await asyncio.sleep(task.trigger_interval)
             except Exception:
-                logger.exception("Trigger '%s': check failed", task.name)
+                logger.exception(
+                    "Trigger '%s': check failed (workspace=%s, trigger_cmd=%s)",
+                    task.name, task.workspace, task.trigger,
+                )
                 await asyncio.sleep(task.trigger_interval)
 
     def stop(self) -> None:

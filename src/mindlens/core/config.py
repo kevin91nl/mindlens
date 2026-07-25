@@ -97,22 +97,27 @@ class Config:
         """Get the SQLite path for a workspace."""
         return self.vault_path / name / ".mindlens" / "workspace.db"
 
+    @property
     def core_db_path(self) -> Path:
         """Get the core SQLite path."""
         return self.vault_path / ".mindlens" / "core.db"
 
+    @property
     def global_skills_path(self) -> Path:
         """Get the global skills directory."""
         return self.vault_path / ".mindlens" / "skills"
 
+    @property
     def global_instructions_path(self) -> Path:
         """Get the global instructions directory."""
         return self.vault_path / ".mindlens" / "instructions"
 
+    @property
     def agents_path(self) -> Path:
         """Get the agent definitions directory (visible in Obsidian)."""
         return self.vault_path / "agents"
 
+    @property
     def scheduled_tasks_path(self) -> Path:
         """Get the global scheduled tasks file (vault root)."""
         return self.vault_path / "tasks.yaml"

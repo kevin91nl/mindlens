@@ -82,11 +82,25 @@ class LLMClient:
                 content = paragraphs[-1] if paragraphs else reasoning[-500:]
         tool_calls = choice.get("tool_calls") or []
 
+        # Validate token counts — API sometimes returns 0 for valid requests
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        if input_tokens == 0 and output_tokens == 0 and content:
+            # Estimate minimum tokens: ~4 chars per token for English text
+            estimated_input = max(len(str(messages)) // 4, 1)
+            estimated_output = max(len(content) // 4, 1)
+            logger.warning(
+                "Token count missing from API response, using estimates: input=%d, output=%d, model=%s",
+                estimated_input, estimated_output, data.get("model", self.model),
+            )
+            input_tokens = estimated_input
+            output_tokens = estimated_output
+
         return LLMResponse(
             content=content,
             model=data.get("model", self.model),
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             cost_usd=usage.get("cost", 0.0),
             tool_calls=tool_calls,
         )

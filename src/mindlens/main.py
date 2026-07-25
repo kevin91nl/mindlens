@@ -215,6 +215,19 @@ class MindLens:
             logger.info("Scheduled task '%s' completed (silent)", agent_name)
         elif notify == "full":
             await self.telegram.send_message(result.output)
+        elif notify == "result":
+            # Only notify on errors or meaningful outcomes
+            if not result.success:
+                await self.telegram.send_message(f"❌ {agent_name} failed:\n{result.output[:500]}")
+            else:
+                # Extract issue references from output (closes #N, fix #N, etc.)
+                import re as _re
+                closed = _re.findall(r'(?:closes|close|fix(?:es)?)\s+#(\d+)', result.output, _re.IGNORECASE)
+                if closed:
+                    issue_list = ", ".join(f"#{n}" for n in closed)
+                    await self.telegram.send_message(f"🔧 {agent_name}: opgelost {issue_list}")
+                else:
+                    logger.info("Scheduled task '%s' completed (result: no issues closed)", agent_name)
         else:  # summary
             await self.telegram.send_message(f"✅ {agent_name} done ({workspace})")
 

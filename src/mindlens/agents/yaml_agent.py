@@ -212,8 +212,9 @@ class YamlAgent(Agent):
         # Call LLM — use agentic loop if mode=agentic, else single call
         mode = self._config.get("mode", "single")
         if mode == "agentic":
+            max_steps = int(self._config.get("max_steps", 10))
             content, in_tok, out_tok = await self._agentic_loop(
-                system_prompt, user_message, context
+                system_prompt, user_message, context, max_steps=max_steps
             )
         else:
             content, in_tok, out_tok = await self._llm_complete(
