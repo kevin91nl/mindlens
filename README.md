@@ -5,6 +5,12 @@
 <em>Natural language interface via Telegram • Self-improving • Multi-workspace</em>
 </p>
 
+<p align="center">
+<a href="https://pypi.org/project/mindlens/"><img src="https://img.shields.io/pypi/v/mindlens" alt="PyPI"></a>
+<a href="https://github.com/kevin91nl/mindlens"><img src="https://img.shields.io/github/stars/kevin91nl/mindlens" alt="Stars"></a>
+<a href="https://github.com/kevin91nl/mindlens/blob/main/LICENSE"><img src="https://img.shields.io/github/license/kevin91nl/mindlens" alt="License"></a>
+</p>
+
 ---
 
 ## What is MindLens?
@@ -38,23 +44,19 @@ MindLens Core
 ### 1. Install
 
 ```bash
-# Clone the repo
-git clone https://github.com/kevin91nl/mindlens.git
-cd mindlens
+# Install from PyPI
+pip install mindlens
 
-# Run the installer
-chmod +x install.sh
-./install.sh
+# Or with uv (recommended)
+uv pip install mindlens
 ```
-
-The installer will:
-- Install Python dependencies with `uv`
-- Create your vault structure
-- Guide you through configuration
 
 ### 2. Configure
 
 ```bash
+# Create your vault
+mkdir -p ~/mindlens-vault
+
 # Copy the example config
 cp .env.example .env
 
@@ -72,10 +74,10 @@ You need:
 
 ```bash
 # Start MindLens
-uv run mindlens
+mindlens
 
-# Or use the CLI
-uv run mindlens-cli start
+# Or via uv
+uv run mindlens
 ```
 
 ### 4. Use
