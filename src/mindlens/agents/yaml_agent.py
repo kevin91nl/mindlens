@@ -296,7 +296,7 @@ class YamlAgent(Agent):
         return "\n\n".join(data_parts) if data_parts else ""
 
     async def _agentic_loop(
-        self, system_prompt: str, user_message: str, context: AgentContext, max_steps: int = 5
+        self, system_prompt: str, user_message: str, context: AgentContext, max_steps: int = 10
     ) -> tuple[str, int, int]:
         """Agentic loop using native function calling (OpenAI-compatible).
         
