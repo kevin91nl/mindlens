@@ -68,12 +68,100 @@ class YamlAgent(Agent):
             temperature=0.3,
         )
 
+        # Post-process: create GitHub issues if LLM suggested them
+        created_issues = await self._create_issues_from_response(content)
+
+        output = content
+        if created_issues:
+            output += "\n\n---\n📋 GitHub issues aangemaakt:\n"
+            for issue_url in created_issues:
+                output += f"  ✅ {issue_url}\n"
+
         return AgentResult(
             success=True,
-            output=content,
+            output=output,
             input_tokens=in_tok,
             output_tokens=out_tok,
+            metadata={"created_issues": created_issues},
         )
+
+    async def _create_issues_from_response(self, content: str) -> list[str]:
+        """Parse LLM response for issue suggestions and create them."""
+        import re
+
+        created = []
+
+        # Strategy 1: Look for JSON blocks (object or array)
+        json_blocks = re.findall(r'```json\s*(.+?)\s*```', content, re.DOTALL)
+        for block in json_blocks:
+            try:
+                data = json.loads(block)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            url = self._try_create_issue(item)
+                            if url:
+                                created.append(url)
+                elif isinstance(data, dict):
+                    url = self._try_create_issue(data)
+                    if url:
+                        created.append(url)
+            except json.JSONDecodeError:
+                continue
+
+        # Strategy 2: Look for gh issue create commands
+        gh_blocks = re.findall(r'```bash\s*(gh issue create[^`]*)\s*```', content, re.DOTALL)
+        for block in gh_blocks:
+            try:
+                title_match = re.search(r'--title\s+"([^"]+)"', block)
+                body_match = re.search(r'--body\s+"([^"]+)"', block)
+                label_match = re.search(r'--label\s+"([^"]+)"', block)
+
+                if title_match:
+                    title = title_match.group(1)
+                    body = body_match.group(1) if body_match else ""
+                    labels = label_match.group(1).split(",") if label_match else ["bug"]
+
+                    url = self.create_github_issue(title, body, [l.strip() for l in labels])
+                    if url:
+                        created.append(url)
+            except Exception:
+                continue
+
+        # Strategy 3: Look for inline issue suggestions (### Bug N: title)
+        bug_sections = re.findall(r'###\s*(?:Bug|Issue)\s*\d*:\s*(.+?)(?:\n|$)', content)
+        for title in bug_sections:
+            title = title.strip()
+            if not title:
+                continue
+            if any(title[:30] in c for c in created):
+                continue
+            url = self.create_github_issue(
+                f"[Auto] {title}",
+                f"## Auto-detected by {self.name}\n\n{content[:500]}",
+                ["bug"],
+            )
+            if url:
+                created.append(url)
+
+        return created
+
+    def _try_create_issue(self, data: dict) -> str | None:
+        """Try to create a GitHub issue from parsed JSON data."""
+        title = data.get("title")
+        if not title:
+            return None
+
+        if any(k in data for k in ("severity", "description", "suggested_fix")):
+            labels = data.get("labels", ["bug"])
+            body = f"## Auto-detected by {self.name}\n\n{data.get('description', '')}\n\n"
+            if data.get("suggested_fix"):
+                body += f"## Suggested fix\n\n{data['suggested_fix']}\n\n"
+            if data.get("severity"):
+                body += f"**Severity:** {data['severity']}\n"
+
+            return self.create_github_issue(title, body, labels)
+        return None
 
     async def _gather_tool_data(self, context: AgentContext) -> str:
         """Gather data from configured tools."""
@@ -474,17 +562,28 @@ class YamlAgent(Agent):
                         cwd = str(Path(repo.get("path", "")).expanduser())
                         break
 
+            cmd = ["gh", "issue", "create", "--title", title, "--body", body]
+            if labels:
+                cmd += ["--label", ",".join(labels)]
+
             result = subprocess.run(
-                ["gh", "issue", "create",
-                 "--title", title,
-                 "--body", body,
-                 "--label", ",".join(labels)],
-                capture_output=True, text=True, timeout=30, cwd=cwd,
+                cmd, capture_output=True, text=True, timeout=30, cwd=cwd,
             )
             if result.returncode == 0:
-                return result.stdout.strip()
+                url = result.stdout.strip()
+                logger.info("Created GitHub issue: %s — %s", url, title)
+                return url
+
+            # Retry without labels if they don't exist
+            logger.warning("gh issue create failed (labels=%s): %s", labels, result.stderr.strip())
+            if labels:
+                logger.info("Retrying without labels...")
+                return self.create_github_issue(title, body, [])
+
+            logger.error("Failed to create issue: %s", result.stderr.strip())
             return None
-        except Exception:
+        except Exception as e:
+            logger.error("Exception creating GitHub issue: %s", e)
             return None
 
     def _run_command(self, context: AgentContext) -> str:
