@@ -41,8 +41,148 @@ class YamlAgent(Agent):
         self._tools = self._config.get("tools") or []
         self._notify = self._config.get("notify", "summary")
         self._schedule = self._config.get("schedule")
+        self._skills_config = self._config.get("skills") or []
 
         super().__init__(**kwargs)
+
+    def _load_skills(self, context: AgentContext) -> str:
+        """Load skills based on agent's skills: config and inject into context.
+
+        Supports patterns:
+          - global:*           → all global skills
+          - workspace:*        → all workspace skills (context.workspace)
+          - global:skill-name  → specific global skill
+          - workspace:skill-name → specific workspace skill
+          - skill-name         → search both global and workspace
+        """
+        if not self._skills_config:
+            return ""
+
+        vault = self.config.vault_path
+        loaded_skills: list[str] = []
+        max_skills = 5  # Token budget: max 5 skills per invocation
+
+        for pattern in self._skills_config:
+            if len(loaded_skills) >= max_skills:
+                break
+
+            pattern = str(pattern).strip()
+
+            if pattern == "global:*":
+                # Load all global skills
+                index_path = vault / ".mindlens" / "skills" / "index.yaml"
+                loaded_skills.extend(
+                    self._load_skills_from_index(index_path, "global", max_skills - len(loaded_skills))
+                )
+
+            elif pattern == "workspace:*" and context.workspace:
+                # Load all workspace skills
+                index_path = vault / context.workspace / ".mindlens" / "skills" / "index.yaml"
+                loaded_skills.extend(
+                    self._load_skills_from_index(index_path, context.workspace, max_skills - len(loaded_skills))
+                )
+
+            elif pattern.startswith("global:"):
+                # Specific global skill
+                skill_name = pattern.split(":", 1)[1]
+                skill_content = self._load_single_skill(vault / ".mindlens" / "skills", skill_name)
+                if skill_content:
+                    loaded_skills.append(skill_content)
+
+            elif pattern.startswith("workspace:") and context.workspace:
+                # Specific workspace skill
+                skill_name = pattern.split(":", 1)[1]
+                skill_content = self._load_single_skill(
+                    vault / context.workspace / ".mindlens" / "skills", skill_name
+                )
+                if skill_content:
+                    loaded_skills.append(skill_content)
+
+            else:
+                # Bare skill name — search global then workspace
+                skill_content = self._load_single_skill(vault / ".mindlens" / "skills", pattern)
+                if not skill_content and context.workspace:
+                    skill_content = self._load_single_skill(
+                        vault / context.workspace / ".mindlens" / "skills", pattern
+                    )
+                if skill_content:
+                    loaded_skills.append(skill_content)
+
+        if not loaded_skills:
+            return ""
+
+        return "\n\n---\n\n".join(loaded_skills)
+
+    def _load_skills_from_index(
+        self, index_path: Path, scope: str, max_count: int
+    ) -> list[str]:
+        """Load skills from an index.yaml file."""
+        if not index_path.exists() or max_count <= 0:
+            return []
+
+        try:
+            index_data = yaml.safe_load(index_path.read_text()) or {}
+            skills_list = index_data.get("skills") or []
+        except Exception as e:
+            logger.debug("Failed to load skill index %s: %s", index_path, e)
+            return []
+
+        loaded: list[str] = []
+        skills_dir = index_path.parent
+
+        for skill_entry in skills_list[:max_count]:
+            name = skill_entry.get("name", "")
+            description = skill_entry.get("description", "")
+            path = skill_entry.get("path", "")
+
+            if not path:
+                continue
+
+            skill_file = skills_dir / path
+            if not skill_file.exists():
+                continue
+
+            try:
+                content = skill_file.read_text().strip()
+                if content:
+                    loaded.append(f"## Skill: {name} ({scope})\n{description}\n\n{content}")
+            except Exception as e:
+                logger.debug("Failed to load skill %s: %s", name, e)
+
+        return loaded
+
+    def _load_single_skill(self, skills_dir: Path, skill_name: str) -> str | None:
+        """Load a single skill by name from a skills directory."""
+        # Try exact filename first
+        for ext in (".md", ".yaml", ".yml"):
+            skill_file = skills_dir / f"{skill_name}{ext}"
+            if skill_file.exists():
+                try:
+                    content = skill_file.read_text().strip()
+                    if content:
+                        return f"## Skill: {skill_name}\n\n{content}"
+                except Exception:
+                    pass
+
+        # Try from index
+        index_path = skills_dir / "index.yaml"
+        if index_path.exists():
+            try:
+                index_data = yaml.safe_load(index_path.read_text()) or {}
+                for entry in index_data.get("skills") or []:
+                    if entry.get("name") == skill_name:
+                        path = entry.get("path", "")
+                        if path:
+                            skill_file = skills_dir / path
+                            if skill_file.exists():
+                                content = skill_file.read_text().strip()
+                                if content:
+                                    desc = entry.get("description", "")
+                                    return f"## Skill: {skill_name}\n{desc}\n\n{content}"
+            except Exception:
+                pass
+
+        return None
 
     @classmethod
     def from_yaml(cls, yaml_path: Path, **kwargs: Any) -> YamlAgent:
@@ -51,6 +191,9 @@ class YamlAgent(Agent):
 
     async def run(self, context: AgentContext) -> AgentResult:
         """Execute the agent based on its YAML definition."""
+        # Load skills from vault
+        skills_content = self._load_skills(context)
+
         # Gather tool data based on configured tools
         tool_data = await self._gather_tool_data(context)
 
@@ -61,15 +204,20 @@ class YamlAgent(Agent):
         if tool_data:
             user_message += f"\nBeschikbare data:\n{tool_data}"
 
+        # Build system prompt with skills injected
+        system_prompt = self._system_prompt
+        if skills_content:
+            system_prompt += f"\n\n# Beschikbare Skills\n\n{skills_content}"
+
         # Call LLM — use agentic loop if mode=agentic, else single call
         mode = self._config.get("mode", "single")
         if mode == "agentic":
             content, in_tok, out_tok = await self._agentic_loop(
-                self._system_prompt, user_message, context
+                system_prompt, user_message, context
             )
         else:
             content, in_tok, out_tok = await self._llm_complete(
-                self._system_prompt, user_message, temperature=0.3,
+                system_prompt, user_message, temperature=0.3,
             )
 
         # Post-process: create GitHub issues if LLM suggested them

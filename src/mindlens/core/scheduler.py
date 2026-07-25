@@ -23,6 +23,8 @@ class ScheduledTask:
     message: str
     enabled: bool = True
     notify: str = "summary"  # "silent", "summary", "full"
+    continuous: bool = False  # run as persistent background agent
+    check_command: str = ""   # bash command to check if work exists (exit 0 = work, exit 1 = idle)
 
     def matches_now(self, minute: int, hour: int, day: int, month: int, weekday: int) -> bool:
         """Check if this task should run now based on cron expression."""
