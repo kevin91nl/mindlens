@@ -17,9 +17,6 @@ class Config:
     llm_api_key: str = ""
     llm_base_url: str = "https://openrouter.ai/api/v1"
 
-    # OpenRouter Management
-    openrouter_management_key: str = ""
-
     # Telegram
     telegram_token: str = ""
     telegram_user_id: int = 0
@@ -83,7 +80,6 @@ class Config:
             llm_model=os.environ.get("MINDLENS_LLM_MODEL", "Xiaomi/MiMo-V2.5-Pro"),
             llm_api_key=os.environ.get("MINDLENS_LLM_API_KEY", ""),
             llm_base_url=os.environ.get("MINDLENS_LLM_BASE_URL", "https://openrouter.ai/api/v1"),
-            openrouter_management_key=os.environ.get("MINDLENS_OPENROUTER_MANAGEMENT_KEY", ""),
             telegram_token=os.environ.get("MINDLENS_TELEGRAM_TOKEN", ""),
             telegram_user_id=int(os.environ.get("MINDLENS_TELEGRAM_USER_ID", "0")),
             vault_path=vault,
