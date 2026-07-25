@@ -438,7 +438,7 @@ class YamlAgent(Agent):
         # Get the current open issue number from GitHub
         try:
             r = _sub.run(
-                "gh issue list --repo kevin91nl/mindlens --label triaged --label bug --state open --limit 1 --json number",
+                "gh issue list --repo kevin91nl/mindlens --label triaged --state open --limit 1 --json number",
                 shell=True, capture_output=True, text=True, timeout=15,
             )
             import json as _json
