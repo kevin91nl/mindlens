@@ -11,7 +11,8 @@ from pathlib import Path
 from mindlens.agents.agent_architect import AgentArchitect
 from mindlens.agents.agent_librarian import AgentLibrarian
 from mindlens.agents.agent_optimizer import AgentOptimizer
-from mindlens.agents.base import AgentContext, AgentRegistry
+from mindlens.agents.base import AgentContext
+from mindlens.agents.registry import AgentRegistry
 from mindlens.agents.chief_of_staff import ChiefOfStaff
 from mindlens.agents.workspace_manager import WorkspaceManager
 from mindlens.agents.session_observer import SessionObserver
