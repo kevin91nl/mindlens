@@ -281,6 +281,9 @@ class YamlAgent(Agent):
         elif tool_name == "scan_python_imports":
             return self._scan_python_imports()
 
+        elif tool_name == "scan_platform_issues":
+            return self._scan_platform_issues()
+
         elif tool_name == "check_yaml_consistency":
             return self._check_yaml_consistency()
 
@@ -348,6 +351,67 @@ class YamlAgent(Agent):
             return "✅ Alle Python imports zijn geldig."
 
         return "⚠️ Mogelijk gebroken imports:\n" + "\n".join(f"- {i}" for i in issues[:10])
+
+    def _scan_platform_issues(self) -> str:
+        """Scan for cross-platform compatibility issues."""
+        import re
+        projects = [
+            Path.home() / "projects" / "mindlens" / "src",
+            Path.home() / "projects" / "riskstudio" / "riskstudio-worker" / "src",
+        ]
+
+        # Patterns that indicate real platform issues (not regex strings or dev paths)
+        platform_patterns = [
+            (r'subprocess\.run\([^)]*shell\s*=\s*True', "subprocess met shell=True (shell-dependent)"),
+            (r'os\.system\(', "os.system() gebruikt (shell-dependent)"),
+            (r'os\.path\.join', "os.path.join (gebruik pathlib i.p.v.)"),
+            (r'tempfile\.gettempdir\(\)', "tempfile.gettempdir() (platform-dependent)"),
+            (r'sys\.platform', "sys.platform check (kan platform-specifiek zijn)"),
+            (r'platform\.system\(\)', "platform.system() check"),
+        ]
+
+        # Skip patterns: strings, comments, test files, scanner itself
+        skip_patterns = [
+            r'^\s*#',  # comments
+            r'^\s*["\']',  # string literals
+            r'r["\']',  # raw strings (regex)
+            r'test_',  # test files
+            r'_test\.py',
+        ]
+
+        issues = []
+        for project in projects:
+            if not project.exists():
+                continue
+            for py_file in project.rglob("*.py"):
+                # Skip test files and scanner itself
+                if "test" in py_file.name.lower() or py_file.name == "yaml_agent.py":
+                    continue
+                try:
+                    content = py_file.read_text()
+                    rel_path = py_file.relative_to(project.parent.parent)
+                    for line_num, line in enumerate(content.splitlines(), 1):
+                        # Skip comments and string-only lines
+                        if any(re.search(p, line) for p in skip_patterns):
+                            continue
+                        for pattern, desc in platform_patterns:
+                            if re.search(pattern, line):
+                                issues.append({
+                                    "file": str(rel_path),
+                                    "line": line_num,
+                                    "issue": desc,
+                                    "code": line.strip()[:80],
+                                })
+                except Exception:
+                    continue
+
+        if not issues:
+            return "✅ Geen platform-specifieke issues gevonden."
+
+        result = f"⚠️ {len(issues)} platform-specifieke issues gevonden:\n\n"
+        for i in issues[:15]:
+            result += f"- **{i['file']}:{i['line']}** — {i['issue']}\n  `{i['code']}`\n\n"
+        return result
 
     def _check_yaml_consistency(self) -> str:
         """Check if YAML agent definitions match Python agents."""
