@@ -531,21 +531,172 @@ class MindLens:
                 pass  # Don't let logging failures break the system
 
 
-def run() -> None:
-    """Entry point for `mindlens` CLI command."""
-    config = Config.from_env()
+def _build_cli_context(config: Config) -> tuple:
+    """Build minimal runtime context for CLI commands. Returns (llm, event_bus, registry)."""
+    import asyncio
+    from mindlens.core.event_bus import EventBus
+    from mindlens.core.llm import LLMClient
+    from mindlens.agents.registry import AgentRegistry
+    from mindlens.agents.chief_of_staff import ChiefOfStaff
 
-    if not config.telegram_token:
-        print("Error: MINDLENS_TELEGRAM_TOKEN not set in .env")
-        sys.exit(1)
+    event_bus = EventBus()
+    llm = LLMClient(
+        api_key=config.llm_api_key,
+        model=config.llm_model,
+        base_url=config.llm_base_url,
+    )
+    registry = AgentRegistry()
+    registry.register(ChiefOfStaff)
+
+    yaml_paths = discover_yaml_agents(config.vault_path)
+    for yaml_path in yaml_paths:
+        try:
+            temp = YamlAgent(yaml_path=yaml_path, llm=llm, event_bus=event_bus, config=config)
+            if temp.name not in registry._agents:
+                registry._agents[temp.name] = type(
+                    f"YamlAgent_{temp.name}",
+                    (YamlAgent,),
+                    {"_yaml_path": yaml_path, "name": temp.name, "description": temp.description, "capabilities": temp.capabilities},
+                )
+        except Exception as e:
+            logger.debug("Skip YAML agent %s: %s", yaml_path, e)
+
+    return llm, event_bus, registry
+
+
+async def _cli_run_agent(config: Config, agent_name: str, workspace: str | None, task: str) -> None:
+    """Run a single agent directly from CLI."""
+    llm, event_bus, registry = _build_cli_context(config)
+
+    agent = registry.create(agent_name, llm=llm, event_bus=event_bus, config=config)
+    if not agent:
+        available = ", ".join(a["name"] for a in registry.list_agents())
+        print(f"❌ Agent '{agent_name}' not found.\nAvailable: {available}")
+        await llm.close()
+        return
+
+    context = AgentContext(task=task, workspace=workspace)
+    print(f"⏳ Running {agent_name}...")
+    result = await agent.run(context)
+
+    print(f"\n{'='*60}")
+    print(result.output)
+    print(f"{'='*60}")
+    if result.input_tokens or result.output_tokens:
+        print(f"Tokens: {result.input_tokens} in / {result.output_tokens} out")
+    if result.metadata.get("created_issues"):
+        print(f"Issues created: {result.metadata['created_issues']}")
+
+    await llm.close()
+
+
+async def _cli_send_message(config: Config, message: str, workspace: str) -> None:
+    """Send a message through Chief of Staff (like Telegram)."""
+    llm, event_bus, registry = _build_cli_context(config)
+
+    cos = registry.create("chief_of_staff", llm=llm, event_bus=event_bus, config=config)
+    if not cos:
+        print("❌ Chief of Staff not available.")
+        await llm.close()
+        return
+
+    context = AgentContext(task=message, workspace=workspace)
+    print(f"⏳ Processing...")
+    result = await cos.run(context)
+
+    # Check if CoS wants to route to another agent
+    route_events = [e for e in result.events if e.get("topic") == "agent.route"]
+    if route_events:
+        route = route_events[0]["data"]
+        target = route.get("target_agent")
+        target_ws = route.get("target_workspace", workspace)
+        target_task = route.get("task", message)
+        print(f"→ Routing to {target} [{target_ws}]")
+
+        agent = registry.create(target, llm=llm, event_bus=event_bus, config=config)
+        if agent:
+            ctx = AgentContext(task=target_task, workspace=target_ws)
+            result = await agent.run(ctx)
+        else:
+            print(f"❌ Agent '{target}' not found.")
+            await llm.close()
+            return
+
+    print(f"\n{'='*60}")
+    print(result.output)
+    print(f"{'='*60}")
+    if result.metadata.get("created_issues"):
+        print(f"Issues created: {result.metadata['created_issues']}")
+
+    await llm.close()
+
+
+def _cli_list_agents(config: Config) -> None:
+    """List all available agents."""
+    llm, event_bus, registry = _build_cli_context(config)
+
+    agents = registry.list_agents()
+    print(f"📋 {len(agents)} agents registered:\n")
+    for a in sorted(agents, key=lambda x: x["name"]):
+        print(f"  {a['name']:30s} {a['description']}")
+
+
+def run() -> None:
+    """Entry point for `mindlens` CLI command.
+
+    Usage:
+      mindlens                          # Boot daemon (Telegram + scheduler)
+      mindlens run <agent> [--workspace WS] [--task "..."]
+      mindlens send "message" [--workspace WS]
+      mindlens agents
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="mindlens", description="MindLens CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # run <agent>
+    p_run = sub.add_parser("run", help="Run a specific agent directly")
+    p_run.add_argument("agent", help="Agent name (e.g. onboarding_doctor)")
+    p_run.add_argument("--workspace", "-w", default=None, help="Workspace context")
+    p_run.add_argument("--task", "-t", default="Run health check", help="Task/message for the agent")
+
+    # send "message"
+    p_send = sub.add_parser("send", help="Send a message via Chief of Staff")
+    p_send.add_argument("message", help="Message to send")
+    p_send.add_argument("--workspace", "-w", default="HQ", help="Workspace context (default: HQ)")
+
+    # agents
+    sub.add_parser("agents", help="List all registered agents")
+
+    args = parser.parse_args()
+
+    # No subcommand → boot daemon (original behavior)
+    if args.command is None:
+        config = Config.from_env()
+        if not config.telegram_token:
+            print("Error: MINDLENS_TELEGRAM_TOKEN not set in .env")
+            sys.exit(1)
+        if not config.llm_api_key:
+            print("Error: MINDLENS_LLM_API_KEY not set in .env")
+            sys.exit(1)
+        app = MindLens(config)
+        try:
+            asyncio.run(app.boot())
+        except KeyboardInterrupt:
+            logger.info("Interrupted. Shutting down...")
+            asyncio.run(app.shutdown())
+        return
+
+    # Subcommands — only need LLM key
+    config = Config.from_env()
     if not config.llm_api_key:
         print("Error: MINDLENS_LLM_API_KEY not set in .env")
         sys.exit(1)
 
-    app = MindLens(config)
-
-    try:
-        asyncio.run(app.boot())
-    except KeyboardInterrupt:
-        logger.info("Interrupted. Shutting down...")
-        asyncio.run(app.shutdown())
+    if args.command == "run":
+        asyncio.run(_cli_run_agent(config, args.agent, args.workspace, args.task))
+    elif args.command == "send":
+        asyncio.run(_cli_send_message(config, args.message, args.workspace))
+    elif args.command == "agents":
+        _cli_list_agents(config)
