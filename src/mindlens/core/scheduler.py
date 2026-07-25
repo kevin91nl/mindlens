@@ -74,7 +74,7 @@ class Scheduler:
         self._running = False
 
     def load_tasks(self) -> list[ScheduledTask]:
-        """Load tasks from global and per-workspace scheduled_tasks.yaml files."""
+        """Load tasks from global, per-workspace tasks.yaml, and YAML agent definitions."""
         self._tasks = []
 
         # Global tasks (tasks.yaml in vault root)
@@ -89,13 +89,49 @@ class Scheduler:
                 if ws_file.exists():
                     self._tasks.extend(self._load_file(ws_file, item.name))
 
+        # YAML agents with schedule field
+        self._tasks.extend(self._load_yaml_agent_tasks())
+
         enabled = sum(1 for t in self._tasks if t.enabled)
-        ws_count = sum(1 for item in self.vault_path.iterdir()
-                       if item.is_dir() and not item.name.startswith(".") and item.name != "scheduled"
-                       and (item / "tasks.yaml").exists())
-        logger.info("Loaded %d scheduled tasks (%d enabled): global + %d workspaces",
-                     len(self._tasks), enabled, ws_count)
+        logger.info("Loaded %d scheduled tasks (%d enabled)", len(self._tasks), enabled)
         return self._tasks
+
+    def _load_yaml_agent_tasks(self) -> list[ScheduledTask]:
+        """Discover YAML agents with schedule fields and create tasks."""
+        from mindlens.agents.yaml_agent import discover_yaml_agents
+
+        tasks = []
+        yaml_paths = discover_yaml_agents(self.vault_path)
+
+        for yaml_path in yaml_paths:
+            try:
+                data = yaml.safe_load(yaml_path.read_text()) or {}
+                schedule = data.get("schedule")
+                if not schedule:
+                    continue
+
+                name = data.get("name", yaml_path.stem)
+                workspace = "Cortex" if "Cortex" in str(yaml_path) else "HQ"
+                notify = data.get("notify", "summary")
+
+                # Check if this task already exists in tasks.yaml
+                existing_names = {t.name for t in self._tasks}
+                if name in existing_names:
+                    continue
+
+                tasks.append(ScheduledTask(
+                    name=name,
+                    schedule=schedule,
+                    agent=name,
+                    workspace=workspace,
+                    message=f"Voer {name} taak uit: {data.get('description', '')}",
+                    enabled=True,
+                    notify=notify,
+                ))
+            except Exception:
+                continue
+
+        return tasks
 
     def _load_file(self, path: Path, scope: str) -> list[ScheduledTask]:
         """Load tasks from a single YAML file."""

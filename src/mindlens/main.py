@@ -21,6 +21,7 @@ from mindlens.agents.memory_manager import MemoryManager
 from mindlens.agents.test_runner import TestRunner
 from mindlens.agents.bug_hunter import BugHunter
 from mindlens.agents.security_red_team import SecurityRedTeam
+from mindlens.agents.yaml_agent import YamlAgent, discover_yaml_agents
 from mindlens.core.config import Config
 from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
 from mindlens.core.event_bus import Event, EventBus
@@ -141,8 +142,9 @@ class MindLens:
             await self.telegram.send_message(f"✅ {agent_name} done ({workspace})")
 
     def _register_agents(self) -> None:
-        """Register all core agents."""
-        agents = [
+        """Register all core agents + discover YAML agents from vault."""
+        # Core Python agents
+        core_agents = [
             ChiefOfStaff,
             WorkspaceManager,
             AgentArchitect,
@@ -157,8 +159,26 @@ class MindLens:
             BugHunter,
             SecurityRedTeam,
         ]
-        for agent_cls in agents:
+        for agent_cls in core_agents:
             self.registry.register(agent_cls)
+
+        # Discover YAML-driven agents from vault
+        yaml_paths = discover_yaml_agents(self.config.vault_path)
+        for yaml_path in yaml_paths:
+            try:
+                # Create a temporary instance to get the name
+                temp = YamlAgent(yaml_path=yaml_path, llm=self.llm, event_bus=self.event_bus, config=self.config)
+                # Register by name — the registry stores the class, we create instances on demand
+                if temp.name not in self.registry._agents:
+                    # Store the YAML path for lazy instantiation
+                    self.registry._agents[temp.name] = type(
+                        f"YamlAgent_{temp.name}",
+                        (YamlAgent,),
+                        {"_yaml_path": yaml_path, "name": temp.name, "description": temp.description, "capabilities": temp.capabilities},
+                    )
+                    logger.info("Registered YAML agent: %s from %s", temp.name, yaml_path.name)
+            except Exception as e:
+                logger.warning("Failed to register YAML agent from %s: %s", yaml_path, e)
 
     def _setup_event_handlers(self) -> None:
         """Set up event subscriptions."""

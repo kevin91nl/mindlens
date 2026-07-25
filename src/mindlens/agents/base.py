@@ -409,6 +409,13 @@ class AgentRegistry:
         """Create an agent instance by name with scope."""
         cls = self._agents.get(name)
         if cls:
+            # Check if this is a YAML agent (has _yaml_path)
+            yaml_path = getattr(cls, "_yaml_path", None)
+            if yaml_path:
+                from mindlens.agents.yaml_agent import YamlAgent
+                agent = YamlAgent.from_yaml(yaml_path, llm=llm, event_bus=event_bus, config=config)
+                agent.scope = scope
+                return agent
             agent = cls(llm=llm, event_bus=event_bus, config=config)
             agent.scope = scope
             return agent
