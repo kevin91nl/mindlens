@@ -61,12 +61,16 @@ class YamlAgent(Agent):
         if tool_data:
             user_message += f"\nBeschikbare data:\n{tool_data}"
 
-        # Call LLM with the YAML-defined system prompt
-        content, in_tok, out_tok = await self._llm_complete(
-            self._system_prompt,
-            user_message,
-            temperature=0.3,
-        )
+        # Use agentic loop only if mode=agentic (default: single for speed)
+        mode = self._config.get("mode", "single")
+        if mode == "agentic" and any(isinstance(t, dict) for t in self._tools):
+            content, in_tok, out_tok = await self._agentic_loop(
+                self._system_prompt, user_message, context
+            )
+        else:
+            content, in_tok, out_tok = await self._llm_complete(
+                self._system_prompt, user_message, temperature=0.3,
+            )
 
         # Post-process: create GitHub issues if LLM suggested them
         created_issues = await self._create_issues_from_response(content)
@@ -291,6 +295,86 @@ class YamlAgent(Agent):
 
         return "\n\n".join(data_parts) if data_parts else ""
 
+    async def _agentic_loop(
+        self, system_prompt: str, user_message: str, context: AgentContext, max_steps: int = 3
+    ) -> tuple[str, int, int]:
+        """ReAct agentic loop: LLM can call tools, get results, repeat until done."""
+        tool_descriptions = []
+        for t in self._tools:
+            if isinstance(t, dict):
+                tool_descriptions.append(f"- {t['name']}: {t.get('command', '')[:100]}")
+        tools_hint = "\n".join(tool_descriptions)
+
+        loop_prompt = (
+            f"{system_prompt}\n\n"
+            f"## Beschikbare tools\n"
+            f"Je kunt tools aanroepen door een JSON object te outputten:\n"
+            f'{{"tool": "tool_name", "args": {{"key": "value"}}}}\n\n'
+            f"Tools:\n{tools_hint}\n\n"
+            f"Regels:\n"
+            f"- Roep tools aan om data op te halen of acties uit te voeren\n"
+            f"- Na elke tool call krijg je het resultaat terug\n"
+            f"- Als je KLAAR bent, output dan EEN JSON array met je eindacties:\n"
+            f'  ```json\n  [{{"number": 5, "action": "analyzed", ...}}]\n  ```\n'
+            f"- Stop NIET zonder deze eind-JSON array\n"
+        )
+
+        conversation = user_message
+        total_in, total_out = 0, 0
+
+        for step in range(max_steps):
+            response, in_tok, out_tok = await self._llm_complete(
+                loop_prompt, conversation, temperature=0.3
+            )
+            total_in += in_tok
+            total_out += out_tok
+
+            tool_calls = self._extract_tool_calls(response)
+
+            if not tool_calls:
+                return response, total_in, total_out
+
+            # Execute tool calls and build response
+            tool_results = []
+            for call in tool_calls:
+                tool_name = call.get("tool", "")
+                args = call.get("args", {})
+                result = await self._execute_named_tool(tool_name, args, context)
+                tool_results.append(f"Tool result voor {tool_name}:\n{result}")
+
+            conversation = conversation + "\n\n" + response + "\n\n" + "\n\n".join(tool_results)
+
+        return response, total_in, total_out
+
+    def _extract_tool_calls(self, content: str) -> list[dict]:
+        """Extract tool calls from LLM output."""
+        import re
+        calls = []
+
+        # 1. Match XML-style: <function.NAME> or <function_search_code> etc.
+        xml_pattern = r'<function[._](\w+)>(.*?)</function[._]\1>'
+        for match in re.finditer(xml_pattern, content, re.DOTALL):
+            tool_name = match.group(1)
+            body = match.group(2)
+            args = {}
+            for param in re.finditer(r'<parameter\s+name="([^"]+)">(.*?)
+
+    async def _execute_named_tool(self, tool_name: str, args: dict, context: AgentContext) -> str:
+        """Execute a named tool with arguments."""
+        for tool in self._tools:
+            if isinstance(tool, dict) and tool.get("name") == tool_name:
+                variables = dict(args)
+                variables["vault_path"] = str(self.config.vault_path)
+                variables["project_path"] = str(Path.home() / "projects" / "mindlens")
+                variables["workspace"] = context.workspace or ""
+                variables["task"] = context.task[:200]
+                command = tool.get("command", "")
+                for key, value in variables.items():
+                    command = command.replace(f"{{{key}}}", str(value))
+                tool_copy = dict(tool)
+                tool_copy["command"] = command
+                return await self._execute_bash_tool(tool_copy, context)
+        return f"(tool '{tool_name}' niet gevonden)"
 
     async def _execute_bash_tool(self, tool_def: dict, context: AgentContext) -> str:
         """Execute a bash tool defined in YAML."""
@@ -308,10 +392,8 @@ class YamlAgent(Agent):
             "workspace": context.workspace or "",
             "task": context.task[:200],
         }
-        try:
-            command = command.format(**variables)
-        except KeyError:
-            pass  # Leave unresolved placeholders as-is
+        for key, value in variables.items():
+            command = command.replace("{" + key + "}", str(value))
 
         timeout = tool_def.get("timeout", 30)
         cwd = tool_def.get("cwd", str(project))
