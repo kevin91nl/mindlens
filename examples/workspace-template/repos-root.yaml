@@ -1,0 +1,19 @@
+# Root Repos — All repos managed by this MindLens instance
+#
+# Each workspace references repos via its own repos.yaml.
+# Cortex uses this to know which repos it can analyze and improve.
+#
+# Format:
+#   - name: repo-name
+#     path: ~/projects/repo-name
+#     description: "What this repo contains"
+#     github: owner/repo (optional — for gh CLI integration)
+#     type: core | product | tool
+
+repos: []
+# Example:
+# - name: my-project
+#   path: ~/projects/my-project
+#   description: "Main product codebase"
+#   github: myorg/my-project
+#   type: product
