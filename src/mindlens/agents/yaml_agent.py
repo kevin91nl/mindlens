@@ -91,7 +91,7 @@ class YamlAgent(Agent):
         """Execute a tool and return its output."""
         vault = self.config.vault_path
 
-        elif tool_name == "list_agent_runs":
+        if tool_name == "list_agent_runs":
             import aiosqlite
             try:
                 conn = await aiosqlite.connect(str(self.config.core_db_path()))
