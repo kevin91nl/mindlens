@@ -1,0 +1,12 @@
+# Scheduled Tasks
+# See docs/adr/ for task format documentation.
+
+tasks: []
+# Example:
+# - name: daily_review
+#   schedule: "0 9 * * *"
+#   agent: chief_of_staff
+#   workspace: MyProject
+#   message: "Review what happened yesterday"
+#   enabled: true
+#   notify: summary

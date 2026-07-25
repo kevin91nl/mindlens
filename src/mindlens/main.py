@@ -1,0 +1,356 @@
+"""MindLens main entry point — boots all systems."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+from mindlens.agents.agent_architect import AgentArchitect
+from mindlens.agents.agent_librarian import AgentLibrarian
+from mindlens.agents.agent_optimizer import AgentOptimizer
+from mindlens.agents.base import AgentContext, AgentRegistry
+from mindlens.agents.chief_of_staff import ChiefOfStaff
+from mindlens.agents.workspace_manager import WorkspaceManager
+from mindlens.agents.vscode_session_agent import VSCodeSessionAgent
+from mindlens.agents.session_observer import SessionObserver
+from mindlens.agents.efficiency_analyst import EfficiencyAnalyst
+from mindlens.agents.reflector import Reflector
+from mindlens.agents.memory_manager import MemoryManager
+from mindlens.agents.test_runner import TestRunner
+from mindlens.core.config import Config
+from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
+from mindlens.core.event_bus import Event, EventBus
+from mindlens.core.file_watcher import FileWatcher
+from mindlens.core.llm import LLMClient
+from mindlens.core.scheduler import Scheduler
+from mindlens.core.telegram import TelegramBot
+from mindlens.pipelines.raw_to_wiki import run_pipeline
+from mindlens.workspaces.registry import WorkspaceRegistry
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+class MindLens:
+    """The main MindLens runtime — boots all systems and connects them."""
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self.event_bus = EventBus()
+        self.llm = LLMClient(
+            api_key=config.llm_api_key,
+            model=config.llm_model,
+            base_url=config.llm_base_url,
+        )
+        self.registry = AgentRegistry()
+        self.workspace_registry = WorkspaceRegistry(config.vault_path)
+        self.telegram = TelegramBot(config, self.event_bus)
+        self.file_watcher = FileWatcher(self.event_bus, config.vault_path)
+        self.scheduler = Scheduler(config.vault_path, self._handle_scheduled_task)
+
+        self._core_db = None
+        self._workspace_dbs: dict[str, object] = {}
+
+    async def boot(self) -> None:
+        """Boot all MindLens systems."""
+        logger.info("🧠 MindLens booting...")
+
+        # 1. Init databases
+        self._core_db = await init_core_db(self.config.core_db_path())
+
+        # 2. Discover and load workspaces
+        workspaces = self.workspace_registry.load_all()
+        for name, ws in workspaces.items():
+            logger.info("  Workspace: %s — %s", name, ws.mission[:60] if ws.mission else "(no mission)")
+            self._workspace_dbs[name] = await init_workspace_db(
+                self.config.workspace_db_path(name)
+            )
+
+        # 3. Register agents
+        self._register_agents()
+
+        # 4. Subscribe to events
+        self._setup_event_handlers()
+
+        # 5. Start file watcher (pass the running loop)
+        loop = asyncio.get_running_loop()
+        self.file_watcher.start(loop=loop)
+
+        # 6. Start Telegram bot
+        await self.telegram.start()
+
+        # 7. Start scheduler (background task)
+        asyncio.create_task(self.scheduler.start())
+
+        logger.info("🧠 MindLens is online. %d workspaces, %d agents.",
+                     len(workspaces), len(self.registry.list_agents()))
+
+        # Keep the event loop running — wait forever
+        try:
+            await asyncio.Event().wait()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            pass
+
+    async def shutdown(self) -> None:
+        """Graceful shutdown."""
+        logger.info("🧠 MindLens shutting down...")
+        self.scheduler.stop()
+        self.file_watcher.stop()
+        await self.telegram.stop()
+        await self.llm.close()
+        if self._core_db:
+            await self._core_db.close()
+        for db in self._workspace_dbs.values():
+            await db.close()
+        logger.info("🧠 MindLens stopped.")
+
+    async def _handle_scheduled_task(self, agent_name: str, workspace: str, message: str) -> None:
+        """Execute a scheduled task by running an agent."""
+        agent = self.registry.create(
+            agent_name,
+            llm=self.llm,
+            event_bus=self.event_bus,
+            config=self.config,
+        )
+        if not agent:
+            logger.error("Scheduled task: agent '%s' not found", agent_name)
+            return
+
+        context = AgentContext(task=message, workspace=workspace)
+        result = await agent.run(context)
+
+        # Find the task's notification level
+        notify = "summary"  # default
+        for task in self.scheduler._tasks:
+            if task.message == message and task.workspace == workspace:
+                notify = task.notify
+                break
+
+        if notify == "silent":
+            logger.info("Scheduled task '%s' completed (silent)", agent_name)
+        elif notify == "full":
+            await self.telegram.send_message(result.output)
+        else:  # summary
+            await self.telegram.send_message(f"✅ {agent_name} done ({workspace})")
+
+    def _register_agents(self) -> None:
+        """Register all core agents."""
+        agents = [
+            ChiefOfStaff,
+            WorkspaceManager,
+            AgentArchitect,
+            AgentOptimizer,
+            AgentLibrarian,
+            VSCodeSessionAgent,
+            SessionObserver,
+            EfficiencyAnalyst,
+            Reflector,
+            MemoryManager,
+            TestRunner,
+        ]
+        for agent_cls in agents:
+            self.registry.register(agent_cls)
+
+    def _setup_event_handlers(self) -> None:
+        """Set up event subscriptions."""
+        # Chief of Staff handles telegram messages
+        self.event_bus.subscribe("telegram.message", self._handle_telegram_message)
+
+        # Agent routing events (from CoS after streaming completes)
+        self.event_bus.subscribe("agent.route", self._handle_agent_route)
+
+        # File watcher triggers pipeline (creation AND modification)
+        self.event_bus.subscribe("raw_file.created", self._handle_raw_file)
+        self.event_bus.subscribe("raw_file.modified", self._handle_raw_file)
+
+        # Log all events
+        self.event_bus.subscribe("*", self._log_event)
+
+    async def _handle_telegram_message(self, event: Event) -> None:
+        """Stream CoS response to Telegram. Routing handled via event bus."""
+        text = event.data.get("text", "")
+        workspace = event.data.get("workspace", "HQ")
+        logger.info("Processing Telegram message: %r", text[:80])
+
+        try:
+            cos = self.registry.create(
+                "chief_of_staff",
+                llm=self.llm,
+                event_bus=self.event_bus,
+                config=self.config,
+            )
+            if not cos:
+                await self.telegram.send_message("Error: Chief of Staff niet beschikbaar.")
+                return
+
+            context = AgentContext(task=text, workspace=workspace)
+
+            # Stream response — routing is handled via event bus after stream
+            await self.telegram.stream_message(
+                cos.run_streaming(context),
+                workspace,
+            )
+
+        except Exception:
+            logger.exception("Telegram message handler failed")
+            await self.telegram.send_message("❌ Fout bij verwerken van je bericht.")
+
+    async def _handle_agent_route(self, event: Event) -> None:
+        """Handle routing events from Chief of Staff."""
+        route_data = event.data
+        logger.info("Routing to %s in [%s]", route_data.get("target_agent"), route_data.get("target_workspace"))
+        await self._handle_routed_task_streaming(route_data)
+
+    async def _stream_text(self, text: str):
+        """Yield a single text as one chunk (for stream_message compatibility)."""
+        yield text
+
+    async def _handle_routed_task_streaming(self, route_data: dict) -> None:
+        """Handle a routed task with streaming output."""
+        target_agent = route_data.get("target_agent")
+        target_workspace = route_data.get("target_workspace", "HQ")
+        task = route_data.get("task", "")
+
+        if not target_agent:
+            await self.telegram.send_message("No target agent specified.")
+            return
+
+        agent = self.registry.create(
+            target_agent,
+            llm=self.llm,
+            event_bus=self.event_bus,
+            config=self.config,
+        )
+        if not agent:
+            available = ", ".join(a["name"] for a in self.registry.list_agents())
+            await self.telegram.send_message(f"Agent '{target_agent}' not found. Available: {available}")
+            return
+
+        # Show processing indicator immediately
+        context = AgentContext(task=task, workspace=target_workspace)
+
+        # For agents that produce instant results (session agent, optimizer, etc.)
+        # show ⏳ then the result. For LLM-based agents, stream.
+        if hasattr(agent, 'run_streaming'):
+            # Agent supports streaming
+            await self.telegram.stream_message(
+                agent.run_streaming(context),
+                target_workspace,
+            )
+        else:
+            # Instant agent — show processing, then result
+            processing_msg = await self.telegram._app.bot.send_message(
+                chat_id=self.config.telegram_user_id,
+                text="⏳",
+            )
+            result = await agent.run(context)
+            try:
+                await processing_msg.edit_text(result.output[:4096])
+            except Exception:
+                await self.telegram.send_message(result.output)
+
+    async def _handle_raw_file(self, event: Event) -> None:
+        """Handle new raw file — run the knowledge pipeline."""
+        logger.info("HANDLER ENTERED: raw_file event: %s", event.data)
+        workspace_name = event.data.get("workspace", "")
+        file_path = event.data.get("file_path", "")
+
+        if not workspace_name or not file_path:
+            logger.warning("Raw file event missing data: %s", event.data)
+            return
+
+        logger.info("Processing new raw file: %s in %s", file_path, workspace_name)
+
+        try:
+            await self.telegram.send_message(
+                f"📥 New file detected: {Path(file_path).name}. Processing...",
+                workspace_name,
+            )
+        except Exception as e:
+            logger.exception("Failed to send Telegram notification: %s", e)
+
+        try:
+            ws = self.workspace_registry.load(workspace_name)
+            wiki_pages = [p.stem for p in ws.wiki_pages()]
+
+            result = await run_pipeline(
+                llm=self.llm,
+                source_path=Path(file_path),
+                workspace_path=ws.path,
+                existing_wiki=wiki_pages,
+            )
+
+            wiki_content = result.get("wiki_content", "")
+            if wiki_content:
+                # Write wiki page
+                source_name = Path(file_path).stem
+                wiki_path = ws.path / "wiki" / f"{source_name}.md"
+                wiki_path.write_text(wiki_content)
+
+                await self.telegram.send_message(
+                    f"✅ Wiki page created: wiki/{source_name}.md\n"
+                    f"Links: {', '.join(result.get('wikilinks', []))}",
+                    workspace_name,
+                )
+
+                # Publish event for librarian to potentially extract skills
+                await self.event_bus.publish(Event(
+                    topic="pipeline.completed",
+                    source="raw_to_wiki",
+                    data={
+                        "workspace": workspace_name,
+                        "source": file_path,
+                        "wiki_path": str(wiki_path),
+                        "wikilinks": result.get("wikilinks", []),
+                    },
+                ))
+            else:
+                await self.telegram.send_message(
+                    f"⚠️ Could not generate wiki page for {Path(file_path).name}.",
+                    workspace_name,
+                )
+
+        except Exception as e:
+            logger.exception("Pipeline failed for %s", file_path)
+            await self.telegram.send_message(
+                f"❌ Error processing {Path(file_path).name}: {e}",
+                workspace_name,
+            )
+
+    async def _log_event(self, event: Event) -> None:
+        """Log all events to the core database."""
+        if self._core_db:
+            try:
+                import json
+                await self._core_db.execute(
+                    "INSERT INTO events (topic, source, data) VALUES (?, ?, ?)",
+                    (event.topic, event.source, json.dumps(event.data)),
+                )
+                await self._core_db.commit()
+            except Exception:
+                pass  # Don't let logging failures break the system
+
+
+def run() -> None:
+    """Entry point for `mindlens` CLI command."""
+    config = Config.from_env()
+
+    if not config.telegram_token:
+        print("Error: MINDLENS_TELEGRAM_TOKEN not set in .env")
+        sys.exit(1)
+    if not config.llm_api_key:
+        print("Error: MINDLENS_LLM_API_KEY not set in .env")
+        sys.exit(1)
+
+    app = MindLens(config)
+
+    try:
+        asyncio.run(app.boot())
+    except KeyboardInterrupt:
+        logger.info("Interrupted. Shutting down...")
+        asyncio.run(app.shutdown())

@@ -1,0 +1,5 @@
+repos: []
+# Example:
+# - name: my-repo
+#   path: ~/projects/my-repo
+#   description: "Main codebase"

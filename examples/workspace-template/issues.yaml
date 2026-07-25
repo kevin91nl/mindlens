@@ -1,0 +1,12 @@
+# Issues
+
+issues: []
+# Example:
+# - id: MP-001
+#   title: "First task"
+#   status: todo
+#   priority: high
+#   assignee: chief_of_staff
+#   description: "Description of what needs to be done"
+#   created: "2026-01-01"
+#   updated: "2026-01-01"
