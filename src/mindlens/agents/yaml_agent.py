@@ -130,6 +130,9 @@ class YamlAgent(Agent):
 
                 if title_match:
                     title = title_match.group(1)
+                    # Reject template placeholders
+                    if "{" in title or "}" in title:
+                        continue
                     body = body_match.group(1) if body_match else ""
                     labels = label_match.group(1).split(",") if label_match else ["bug"]
 
@@ -144,6 +147,9 @@ class YamlAgent(Agent):
         for title in bug_sections:
             title = title.strip()
             if not title:
+                continue
+            # Reject template placeholders
+            if "{" in title or "}" in title:
                 continue
             if any(title[:30] in c for c in created):
                 continue
