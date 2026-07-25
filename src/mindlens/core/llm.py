@@ -68,7 +68,18 @@ class LLMClient:
 
         usage = data.get("usage", {})
         choice = data["choices"][0]["message"]
-        content = choice.get("content") or choice.get("reasoning") or ""
+        content = choice.get("content") or ""
+        reasoning = choice.get("reasoning") or ""
+
+        # If no content but reasoning exists, extract final answer from reasoning
+        if not content and reasoning:
+            # Strip thinking tags if present
+            import re
+            content = re.sub(r'<thinking>.*?</thinking>', '', reasoning, flags=re.DOTALL).strip()
+            if not content:
+                # Use last paragraph of reasoning as the answer
+                paragraphs = [p.strip() for p in reasoning.split('\n\n') if p.strip()]
+                content = paragraphs[-1] if paragraphs else reasoning[-500:]
         tool_calls = choice.get("tool_calls") or []
 
         return LLMResponse(
@@ -114,7 +125,10 @@ class LLMClient:
                     try:
                         data = _json.loads(payload)
                         delta = data["choices"][0].get("delta", {})
-                        text = delta.get("content") or delta.get("reasoning") or ""
+                        # Only send content to user, skip reasoning/thinking
+                        text = delta.get("content") or ""
+                        if not text:
+                            continue
                         if text:
                             yield text
                     except (KeyError, IndexError, ValueError):

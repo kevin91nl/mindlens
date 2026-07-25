@@ -124,6 +124,10 @@ class TelegramBot:
         """
         import re
 
+        # Strip any remaining thinking/reasoning blocks
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<thinking>.*$', '', text, flags=re.DOTALL)
+
         # Headers → bold
         text = re.sub(r'^#{1,6}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
 

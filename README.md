@@ -23,12 +23,13 @@ Each workspace has its own knowledge base, agent swarm, and code repos. You inte
 
 ## Why MindLens?
 
-As AI systems become more autonomous, the challenge shifts from building individual models to organizing and understanding communities of intelligent systems.
+Most AI tools help you build a single chatbot or agent. MindLens helps you build an **entire organization of AI agents** — each with their own workspace, knowledge base, and tools.
 
-MindLens explores this future:
-- How do AI agents collaborate?
-- How should autonomous organizations be structured?
-- How can we understand artificial minds?
+Instead of one monolithic AI, you get a team:
+- Agents that triage and fix issues autonomously
+- Agents that monitor code quality and architecture
+- Agents that research competitors and market gaps
+- All coordinated through a single Telegram interface
 
 ## Architecture
 
