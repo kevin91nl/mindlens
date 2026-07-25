@@ -423,7 +423,7 @@ class MindLens:
             )
             result = await agent.run(context)
             try:
-                await processing_msg.edit_text(result.output[:4096])
+                await processing_msg.edit_text(self.telegram._format_for_telegram(result.output[:4096]))
             except Exception:
                 await self.telegram.send_message(result.output)
 

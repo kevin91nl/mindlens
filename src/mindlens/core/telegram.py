@@ -72,7 +72,10 @@ class TelegramBot:
             logger.warning("Cannot send message: bot not started")
             return
 
-        await self._app.bot.send_message(chat_id=self.config.telegram_user_id, text=text)
+        await self._app.bot.send_message(
+            chat_id=self.config.telegram_user_id,
+            text=self._format_for_telegram(text),
+        )
 
     async def stream_message(self, chunks, workspace: str | None = None) -> str:
         """Stream chunks by editing one Telegram message at a safe cadence."""
@@ -93,10 +96,9 @@ class TelegramBot:
         async for chunk in chunks:
             content += chunk
             now = time.monotonic()
-            # Telegram rate-limit protection: max one edit per second.
             if now - last_edit >= 1.0 and content != displayed:
                 try:
-                    await message.edit_text(content[:4096])
+                    await message.edit_text(self._format_for_telegram(content[:4096]))
                     displayed = content
                     last_edit = now
                 except Exception as error:
@@ -105,10 +107,72 @@ class TelegramBot:
         final = content or "No response generated."
         if final != displayed:
             try:
-                await message.edit_text(final[:4096])
+                await message.edit_text(self._format_for_telegram(final[:4096]))
             except Exception:
-                await self._app.bot.send_message(chat_id=self.config.telegram_user_id, text=final[:4096])
+                await self._app.bot.send_message(
+                    chat_id=self.config.telegram_user_id,
+                    text=self._format_for_telegram(final[:4096]),
+                )
         return content
+
+    @staticmethod
+    def _format_for_telegram(text: str) -> str:
+        """Convert full Markdown to Telegram-compatible format.
+
+        Telegram supports: *bold*, _italic_, `code`, ```blocks```, [links](url)
+        Does NOT support: # headers, | tables, ---, **, __, ~~
+        """
+        import re
+
+        # Headers → bold
+        text = re.sub(r'^#{1,6}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+
+        # Tables → list format
+        lines = text.splitlines()
+        result = []
+        in_table = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('|') and '|' in stripped[1:]:
+                if stripped.replace('-', '').replace('|', '').replace(' ', '') == '':
+                    # Table separator row — skip
+                    in_table = True
+                    continue
+                if in_table:
+                    # Table data row
+                    cells = [c.strip() for c in stripped.split('|') if c.strip()]
+                    if cells:
+                        result.append('• ' + ' — '.join(cells))
+                    continue
+                # First table row — header
+                cells = [c.strip() for c in stripped.split('|') if c.strip()]
+                if cells:
+                    result.append('*' + ' | '.join(cells) + '*')
+                    in_table = True
+                continue
+            else:
+                in_table = False
+                result.append(line)
+
+        text = '\n'.join(result)
+
+        # Horizontal rules → blank line
+        text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^\*\*\*+$', '', text, flags=re.MULTILINE)
+
+        # Fix double bold markers (Telegram uses single *)
+        text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+
+        # Fix double italic markers
+        text = re.sub(r'__(.+?)__', r'_\1_', text)
+
+        # Strikethrough → remove (Telegram doesn't support ~~)
+        text = re.sub(r'~~(.+?)~~', r'~\1~', text)
+
+        # Clean up excessive blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        return text.strip()
 
     def _is_authorized(self, update: Update) -> bool:
         """Check if the message is from the authorized user."""
