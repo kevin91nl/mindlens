@@ -18,6 +18,13 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 while [ $restarts -lt $MAX_RESTARTS ]; do
+    # Prevent duplicate: check if mindlens is already running
+    existing_pid=$(pgrep -f "\.venv/bin/mindlens" | head -1)
+    if [ -n "$existing_pid" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] MindLens already running (PID=$existing_pid). Waiting..." >> "$LOGFILE"
+        sleep 30
+        continue
+    fi
     echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting MindLens (attempt $((restarts+1)))" >> "$LOGFILE"
     .venv/bin/mindlens >> "$LOGFILE" 2>&1
     exit_code=$?

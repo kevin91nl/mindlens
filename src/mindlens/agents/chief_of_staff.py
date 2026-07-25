@@ -23,6 +23,9 @@ Your role:
 Available workspaces:
 {workspace_list}
 
+Linked repos:
+{repo_list}
+
 Available agents:
 - workspace_manager: Create/manage workspaces, add agents
 - agent_architect: Design new agents
@@ -76,10 +79,47 @@ class ChiefOfStaff(Agent):
                 lines.append(f"- {item.name}{desc}")
         return "\n".join(lines) if lines else "- (no workspaces found)"
 
+    def _discover_repos(self) -> str:
+        """Build repo list from repos.yaml files in each workspace."""
+        import yaml
+        vault = self.config.vault_path
+        repos: list[str] = []
+        seen: set[str] = set()
+        for item in sorted(vault.iterdir()):
+            if not item.is_dir() or item.name.startswith((".", "_")):
+                continue
+            repos_file = item / "repos.yaml"
+            if not repos_file.exists():
+                continue
+            try:
+                data = yaml.safe_load(repos_file.read_text()) or {}
+                for repo in data.get("repos", []):
+                    name = repo.get("name", "?")
+                    key = f"{item.name}/{name}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    path = repo.get("path", "")
+                    gh = repo.get("github", "")
+                    desc = repo.get("description", "")
+                    caps = ", ".join(repo.get("capabilities", []))
+                    line = f"- {item.name}/{name}: {desc}"
+                    if path:
+                        line += f" | path: {path}"
+                    if gh:
+                        line += f" | github: {gh}"
+                    if caps:
+                        line += f" | capabilities: {caps}"
+                    repos.append(line)
+            except Exception:
+                continue
+        return "\n".join(repos) if repos else "- (no repos linked)"
+
     def _get_system_prompt(self) -> str:
         """Build dynamic system prompt with current workspace list."""
         return SYSTEM_PROMPT_TEMPLATE.format(
-            workspace_list=self._discover_workspaces()
+            workspace_list=self._discover_workspaces(),
+            repo_list=self._discover_repos(),
         )
 
     def _load_wiki_context(self, workspace: str) -> str:
