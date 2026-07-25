@@ -15,6 +15,8 @@ from telegram.ext import (
     filters,
 )
 
+from mindlens.core.event_bus import Event
+
 if TYPE_CHECKING:
     from mindlens.core.config import Config
     from mindlens.core.event_bus import EventBus
@@ -28,6 +30,8 @@ class TelegramBot:
     def __init__(self, config: Config, event_bus: EventBus) -> None:
         self.config = config
         self.event_bus = event_bus
+        self._app: Application | None = None
+        self._current_workspace: str = "HQ"  # Default context
 
     async def _emit_event(self, topic: str, data: dict) -> None:
         """Emit an event to the event bus."""
@@ -36,8 +40,6 @@ class TelegramBot:
             source="telegram",
             data=data,
         ))
-        self._app: Application | None = None
-        self._current_workspace: str = "HQ"  # Default context
 
     async def start(self) -> None:
         """Start the Telegram bot."""
@@ -63,8 +65,21 @@ class TelegramBot:
         logger.info("Telegram bot starting...")
         await self._app.initialize()
         await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=False)
-        logger.info("Telegram bot started. Listening for messages from user %s", self.config.telegram_user_id)
+        try:
+            await self._app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Telegram bot started. Listening for messages from user %s", self.config.telegram_user_id)
+        except Exception as e:
+            if "Conflict" in str(e):
+                logger.warning("Telegram bot conflict (another instance running). Retrying in 30s...")
+                import asyncio
+                await asyncio.sleep(30)
+                try:
+                    await self._app.updater.start_polling(drop_pending_updates=True)
+                    logger.info("Telegram bot started on retry.")
+                except Exception:
+                    logger.error("Telegram bot failed after retry. Running without Telegram.")
+            else:
+                raise
 
     async def stop(self) -> None:
         """Stop the Telegram bot."""
@@ -262,16 +277,12 @@ class TelegramBot:
 
         # Publish event for the Chief of Staff to process
 
-        await self.event_bus.publish(Event(
-            topic="telegram.message",
-            source="telegram",
-            data={
-                "text": text,
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.message", {
+            "text": text,
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
     async def _handle_error(
         self, update: object, context: ContextTypes.DEFAULT_TYPE
@@ -316,16 +327,12 @@ class TelegramBot:
 
         action = query.data
 
-        await self.event_bus.publish(Event(
-            topic="telegram.message",
-            source="telegram",
-            data={
-                "text": f"Toon {action}",
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.message", {
+            "text": f"Toon {action}",
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle photo messages."""
@@ -334,18 +341,14 @@ class TelegramBot:
 
         photo = update.message.photo[-1]
         caption = update.message.caption or "Foto ontvangen"
-        await self.event_bus.publish(Event(
-            topic="telegram.media",
-            source="telegram",
-            data={
-                "type": "photo",
-                "caption": caption,
-                "file_id": photo.file_id,
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.media", {
+            "type": "photo",
+            "caption": caption,
+            "file_id": photo.file_id,
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
         await update.message.reply_text("📸 Foto ontvangen. Verwerken...")
 
@@ -356,20 +359,16 @@ class TelegramBot:
 
         doc = update.message.document
         caption = update.message.caption or f"Document: {doc.file_name}"
-        await self.event_bus.publish(Event(
-            topic="telegram.media",
-            source="telegram",
-            data={
-                "type": "document",
-                "caption": caption,
-                "file_id": doc.file_id,
-                "file_name": doc.file_name,
-                "mime_type": doc.mime_type,
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.media", {
+            "type": "document",
+            "caption": caption,
+            "file_id": doc.file_id,
+            "file_name": doc.file_name,
+            "mime_type": doc.mime_type,
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
         await update.message.reply_text(f"📄 Document ontvangen: {doc.file_name}. Verwerken...")
 
@@ -379,18 +378,14 @@ class TelegramBot:
             return
 
         audio = update.message.voice or update.message.audio
-        await self.event_bus.publish(Event(
-            topic="telegram.media",
-            source="telegram",
-            data={
-                "type": "audio",
-                "file_id": audio.file_id,
-                "duration": getattr(audio, "duration", 0),
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.media", {
+            "type": "audio",
+            "file_id": audio.file_id,
+            "duration": getattr(audio, "duration", 0),
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
         await update.message.reply_text("🎤 Audio ontvangen. Verwerken...")
 
@@ -400,17 +395,13 @@ class TelegramBot:
             return
 
         video = update.message.video
-        await self.event_bus.publish(Event(
-            topic="telegram.media",
-            source="telegram",
-            data={
-                "type": "video",
-                "file_id": video.file_id,
-                "duration": video.duration,
-                "workspace": self._current_workspace,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
-            },
-        ))
+        await self._emit_event("telegram.media", {
+            "type": "video",
+            "file_id": video.file_id,
+            "duration": video.duration,
+            "workspace": self._current_workspace,
+            "user_id": update.effective_user.id,
+            "chat_id": update.effective_chat.id,
+        })
 
         await update.message.reply_text("🎬 Video ontvangen. Verwerken...")

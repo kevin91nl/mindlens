@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+BASE_DELAY = 1.0  # seconds
+MAX_DELAY = 30.0  # seconds
 
 
 @dataclass
@@ -221,18 +226,30 @@ class Scheduler:
                 "Running scheduled task: %s (workspace=%s, correlation_id=%s)",
                 task.name, task.workspace, correlation_id,
             )
-            try:
-                async with lock:
-                    await self.handler(task.agent, task.workspace, task.message)
-                logger.info(
-                    "Task completed: %s (correlation_id=%s)",
-                    task.name, correlation_id,
-                )
-            except Exception:
-                logger.exception(
-                    "Scheduled task %s failed (workspace=%s, correlation_id=%s, message=%s)",
-                    task.name, task.workspace, correlation_id, task.message,
-                )
+            last_error = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    async with lock:
+                        await self.handler(task.agent, task.workspace, task.message)
+                    logger.info(
+                        "Task completed: %s (correlation_id=%s)",
+                        task.name, correlation_id,
+                    )
+                    return
+                except Exception as e:
+                    last_error = e
+                    if attempt < MAX_RETRIES - 1:
+                        delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
+                        logger.warning(
+                            "Scheduled task %s failed (attempt %d/%d, retrying in %.1fs): %s",
+                            task.name, attempt + 1, MAX_RETRIES, delay, str(e),
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.exception(
+                            "Scheduled task %s failed after %d attempts (workspace=%s, correlation_id=%s, message=%s)",
+                            task.name, MAX_RETRIES, task.workspace, correlation_id, task.message,
+                        )
 
         # Launch all tasks concurrently
         await asyncio.gather(
@@ -262,23 +279,33 @@ class Scheduler:
                         logger.info("Trigger '%s': already running, skipping", task.name)
                         await asyncio.sleep(task.trigger_interval)
                         continue
-                    try:
-                        start_time = _time.monotonic()
-                        if lock:
-                            async with lock:
+                    for retry_attempt in range(MAX_RETRIES):
+                        try:
+                            start_time = _time.monotonic()
+                            if lock:
+                                async with lock:
+                                    await self.handler(task.agent, task.workspace, task.message)
+                            else:
                                 await self.handler(task.agent, task.workspace, task.message)
-                        else:
-                            await self.handler(task.agent, task.workspace, task.message)
-                        elapsed = _time.monotonic() - start_time
-                        logger.info(
-                            "Trigger agent '%s' completed (workspace=%s, elapsed=%.1fs)",
-                            task.name, task.workspace, elapsed,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Trigger agent '%s' failed (workspace=%s, trigger_cmd=%s, message=%s)",
-                            task.name, task.workspace, task.trigger, task.message,
-                        )
+                            elapsed = _time.monotonic() - start_time
+                            logger.info(
+                                "Trigger agent '%s' completed (workspace=%s, elapsed=%.1fs)",
+                                task.name, task.workspace, elapsed,
+                            )
+                            break
+                        except Exception as e:
+                            if retry_attempt < MAX_RETRIES - 1:
+                                delay = min(BASE_DELAY * (2 ** retry_attempt), MAX_DELAY)
+                                logger.warning(
+                                    "Trigger agent '%s' failed (attempt %d/%d, retrying in %.1fs): %s",
+                                    task.name, retry_attempt + 1, MAX_RETRIES, delay, str(e),
+                                )
+                                await asyncio.sleep(delay)
+                            else:
+                                logger.exception(
+                                    "Trigger agent '%s' failed after %d attempts (workspace=%s, trigger_cmd=%s, message=%s)",
+                                    task.name, MAX_RETRIES, task.workspace, task.trigger, task.message,
+                                )
                     # Short cooldown before re-checking to avoid tight loops
                     await asyncio.sleep(10)
                     continue
