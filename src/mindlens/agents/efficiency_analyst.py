@@ -11,30 +11,30 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Efficiency Analyst van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Efficiency Analyst of MindLens Cortex.
 
-Je analyseert token- en kostendata om verspilling te identificeren en verbeteringen voor te stellen.
+You analyze token and cost data to identify waste and suggest improvements.
 
-Geef een gestructureerd rapport in het Nederlands met:
-1. Huidige status (tokens, kosten, trends)
-2. Top verspillingen
-3. Concrete verbetervoorstellen met verwachte impact
+Always respond in the same language as the user's message with a structured report:
+1. Current status (tokens, costs, trends)
+2. Top waste areas
+3. Concrete improvement proposals with expected impact
 """
 
 
 class EfficiencyAnalyst(Agent):
     name = "efficiency_analyst"
-    description = "Token/cost tracking, trendanalyse, verspilling identificatie"
+    description = "Token/cost tracking, trend analysis, waste identification"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:
         task = context.task.lower()
 
-        if "dagelijks" in task or "daily" in task or "rapport" in task:
+        if "daily" in task or "report" in task:
             return await self._daily_report()
         elif "trend" in task:
             return await self._trend_analysis()
-        elif "waste" in task or "verspil" in task:
+        elif "waste" in task:
             return await self._waste_analysis()
         else:
             return await self._daily_report()
@@ -75,11 +75,11 @@ class EfficiencyAnalyst(Agent):
             await conn.close()
 
             if not rows:
-                return AgentResult(success=True, output="📊 Geen agent runs vandaag.")
+                return AgentResult(success=True, output="📊 No agent runs today.")
 
             # Build report
-            report = "📊 Dagelijks Efficiency Rapport\n\n"
-            report += "**Vandaag:**\n"
+            report = "📊 Daily Efficiency Report\n\n"
+            report += "**Today:**\n"
             total_tokens = 0
             total_cost = 0
             for agent, ws, runs, in_tok, out_tok, cost, duration, success in rows:
@@ -88,24 +88,24 @@ class EfficiencyAnalyst(Agent):
                 total_cost += cost or 0
                 report += f"• {agent} [{ws}]: {runs} runs, {rate:.0f}% success, {in_tok+out_tok} tokens, ${cost:.4f}\n"
 
-            report += f"\n**Totaal:** {total_tokens} tokens, ${total_cost:.4f}\n"
+            report += f"\n**Total:** {total_tokens} tokens, ${total_cost:.4f}\n"
 
             if trend:
-                report += "\n**7-daagse trend:**\n"
+                report += "\n**7-day trend:**\n"
                 for day, tokens, cost, runs in trend:
                     report += f"  {day}: {tokens} tokens, ${cost:.4f}, {runs} runs\n"
 
             # Use LLM for analysis
             content, in_tok, out_tok = await self._llm_complete(
                 SYSTEM_PROMPT,
-                f"Genereer een efficiency rapport op basis van deze data:\n\n{report}",
+                f"Generate an efficiency report based on this data:\n\n{report}",
                 temperature=0.3,
             )
 
             return AgentResult(success=True, output=content, input_tokens=in_tok, output_tokens=out_tok)
 
         except Exception as e:
-            return AgentResult(success=False, output=f"Fout bij ophalen data: {e}")
+            return AgentResult(success=False, output=f"Error fetching data: {e}")
 
     async def _trend_analysis(self) -> AgentResult:
         """Analyze token/cost trends over time."""
@@ -127,7 +127,7 @@ class EfficiencyAnalyst(Agent):
             await conn.close()
 
             if not rows:
-                return AgentResult(success=True, output="Geen data voor trendanalyse.")
+                return AgentResult(success=True, output="No data for trend analysis.")
 
             data = []
             for day, in_tok, out_tok, cost, runs, duration in rows:
@@ -141,14 +141,14 @@ class EfficiencyAnalyst(Agent):
 
             content, in_tok, out_tok = await self._llm_complete(
                 SYSTEM_PROMPT,
-                f"Analyseer deze 14-daagse trends en identificeer verbeteringen:\n\n{json.dumps(data, indent=2)}",
+                f"Analyze these 14-day trends and identify improvements:\n\n{json.dumps(data, indent=2)}",
                 temperature=0.3,
             )
 
             return AgentResult(success=True, output=content, input_tokens=in_tok, output_tokens=out_tok)
 
         except Exception as e:
-            return AgentResult(success=False, output=f"Fout: {e}")
+            return AgentResult(success=False, output=f"Error: {e}")
 
     async def _waste_analysis(self) -> AgentResult:
         """Identify specific waste patterns."""
@@ -166,7 +166,7 @@ class EfficiencyAnalyst(Agent):
             await conn.close()
 
             if not rows:
-                return AgentResult(success=True, output="Geen data voor waste analyse.")
+                return AgentResult(success=True, output="No data for waste analysis.")
 
             expensive = []
             for agent, ws, task, in_tok, out_tok, cost, duration, success in rows:
@@ -182,11 +182,11 @@ class EfficiencyAnalyst(Agent):
 
             content, in_tok, out_tok = await self._llm_complete(
                 SYSTEM_PROMPT,
-                f"Identificeer verspilling in deze duurste agent runs:\n\n{json.dumps(expensive, indent=2)}",
+                f"Identify waste in these most expensive agent runs:\n\n{json.dumps(expensive, indent=2)}",
                 temperature=0.3,
             )
 
             return AgentResult(success=True, output=content, input_tokens=in_tok, output_tokens=out_tok)
 
         except Exception as e:
-            return AgentResult(success=False, output=f"Fout: {e}")
+            return AgentResult(success=False, output=f"Error: {e}")

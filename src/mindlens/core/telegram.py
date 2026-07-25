@@ -63,23 +63,18 @@ class TelegramBot:
         self._app.add_error_handler(self._handle_error)
 
         logger.info("Telegram bot starting...")
-        await self._app.initialize()
-        await self._app.start()
         try:
+            await self._app.initialize()
+            await self._app.start()
             await self._app.updater.start_polling(drop_pending_updates=True)
             logger.info("Telegram bot started. Listening for messages from user %s", self.config.telegram_user_id)
         except Exception as e:
             if "Conflict" in str(e):
-                logger.warning("Telegram bot conflict (another instance running). Retrying in 30s...")
-                import asyncio
-                await asyncio.sleep(30)
-                try:
-                    await self._app.updater.start_polling(drop_pending_updates=True)
-                    logger.info("Telegram bot started on retry.")
-                except Exception:
-                    logger.error("Telegram bot failed after retry. Running without Telegram.")
+                logger.warning("Telegram bot conflict — another instance is polling. Running without Telegram.")
+                self._app = None
             else:
-                raise
+                logger.exception("Telegram bot failed to start")
+                self._app = None
 
     async def stop(self) -> None:
         """Stop the Telegram bot."""
@@ -311,12 +306,12 @@ class TelegramBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "🧠 MindLens — Beschikbare acties:\n\n"
-            "💬 Praat gewoon natuurlijk\n"
-            "📊 /status — Systeemstatus\n"
-            "🔄 /workspace — Wissel werkruimte\n"
-            "❓ /help — Dit menu\n\n"
-            "Je kunt ook foto's, documenten, audio en video sturen.",
+            "🧠 MindLens — Available actions:\n\n"
+            "💬 Just talk naturally\n"
+            "📊 /status — System status\n"
+            "🔄 /workspace — Switch workspace\n"
+            "❓ /help — This menu\n\n"
+            "You can also send photos, documents, audio and video.",
             reply_markup=reply_markup,
         )
 

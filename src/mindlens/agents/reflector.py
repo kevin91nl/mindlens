@@ -9,21 +9,21 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Reflector van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Reflector of MindLens Cortex.
 
-Je doet diepe reflectie op het hele MindLens systeem. Je identificeert:
-1. Wat werkt goed en waarom
-2. Wat werkt niet en waarom
-3. Welke patronen je ziet
-4. Concrete verbetervoorstellen met verwachte impact
+You perform deep reflection on the entire MindLens system. You identify:
+1. What works well and why
+2. What doesn't work and why
+3. Patterns you observe
+4. Concrete improvement proposals with expected impact
 
-Antwoord in het Nederlands. Wees specifiek en meetbaar.
+Always respond in the same language as the user's message. Be specific and measurable.
 """
 
 
 class Reflector(Agent):
     name = "reflector"
-    description = "Diepe reflectie, verbetervoorstellen, patroonherkenning"
+    description = "Deep reflection, improvement proposals, pattern recognition"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:

@@ -13,31 +13,31 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Memory Manager van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Memory Manager of MindLens Cortex.
 
-Je taken:
-1. Extraheer lessen uit afgeronde taken
-2. Beheer de skill levenscyclus (aanmaken, bijwerken, archiveren)
-3. Identificeer verouderde of ineffectieve skills
-4. Zorg dat kennis niet verloren gaat
+Your tasks:
+1. Extract lessons from completed tasks
+2. Manage the skill lifecycle (create, update, archive)
+3. Identify outdated or ineffective skills
+4. Ensure knowledge is not lost
 
-Antwoord in het Nederlands.
+Always respond in the same language as the user's message.
 """
 
 
 class MemoryManager(Agent):
     name = "memory_manager"
-    description = "Skill extractie, levenscyclus beheer, kennispreservatie"
+    description = "Skill extraction, lifecycle management, knowledge preservation"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:
         task = context.task.lower()
 
-        if "extract" in task or "extraheer" in task:
+        if "extract" in task:
             return await self._extract_skill(context)
-        elif "archive" in task or "verwijder" in task:
+        elif "archive" in task or "remove" in task:
             return await self._archive_stale_skills()
-        elif "list" in task or "overzicht" in task:
+        elif "list" in task or "overview" in task:
             return await self._list_all_skills()
         else:
             return await self._scan_for_extractable(context)
@@ -48,9 +48,9 @@ class MemoryManager(Agent):
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Taak: {context.task}\n"
+            f"Task: {context.task}\n"
             f"Metadata: {json.dumps(context.metadata)}\n\n"
-            f"Is dit een herbruikbaar patroon? Zo ja, genereer een skill in markdown formaat.",
+            f"Is this a reusable pattern? If so, generate a skill in markdown format.",
             temperature=0.3,
         )
 
@@ -82,12 +82,12 @@ class MemoryManager(Agent):
 
             return AgentResult(
                 success=True,
-                output=f"✅ Skill geëxtraheerd: {name}\n\n{content[:300]}",
+                output=f"✅ Skill extracted: {name}\n\n{content[:300]}",
                 input_tokens=in_tok,
                 output_tokens=out_tok,
             )
 
-        return AgentResult(success=True, output="Geen herbruikbaar patroon gevonden.", input_tokens=in_tok, output_tokens=out_tok)
+        return AgentResult(success=True, output="No reusable pattern found.", input_tokens=in_tok, output_tokens=out_tok)
 
     async def _archive_stale_skills(self) -> AgentResult:
         """Find and archive skills that haven't been useful."""
@@ -95,7 +95,7 @@ class MemoryManager(Agent):
         index_path = skills_dir / "index.yaml"
 
         if not index_path.exists():
-            return AgentResult(success=True, output="Geen skills gevonden.")
+            return AgentResult(success=True, output="No skills found.")
 
         index = yaml.safe_load(index_path.read_text()) or {"skills": []}
         skills = index.get("skills") or []
@@ -103,15 +103,15 @@ class MemoryManager(Agent):
         stale = [s for s in skills if s.get("useful_count", 0) == 0 and s.get("last_used")]
 
         if not stale:
-            return AgentResult(success=True, output="Alle skills zijn recent gebruikt of nieuw.")
+            return AgentResult(success=True, output="All skills have been recently used or are new.")
 
-        output = "📦 Skills om te archiveren (0x gebruikt):\n"
+        output = "📦 Skills to archive (0x used):\n"
         for s in stale:
             output += f"  • {s['name']}: {s.get('description', '?')[:60]}\n"
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Beoordeel deze ongebruikte skills. Moeten ze gearchiveerd worden?\n\n{output}",
+            f"Review these unused skills. Should they be archived?\n\n{output}",
             temperature=0.2,
         )
 
@@ -139,9 +139,9 @@ class MemoryManager(Agent):
                         all_skills.append(f"📁 [{item.name}] {s.get('name', '?')}: {s.get('description', '?')[:60]}")
 
         if not all_skills:
-            return AgentResult(success=True, output="Geen skills gevonden in het systeem.")
+            return AgentResult(success=True, output="No skills found in the system.")
 
-        output = f"🧠 Skills overzicht ({len(all_skills)} totaal):\n\n" + "\n".join(all_skills)
+        output = f"🧠 Skills overview ({len(all_skills)} total):\n\n" + "\n".join(all_skills)
         return AgentResult(success=True, output=output)
 
     async def _scan_for_extractable(self, context: AgentContext) -> AgentResult:
@@ -161,7 +161,7 @@ class MemoryManager(Agent):
             await conn.close()
 
             if not rows:
-                return AgentResult(success=True, output="Geen recente runs om te analyseren.")
+                return AgentResult(success=True, output="No recent runs to analyze.")
 
             runs = []
             for agent, ws, task, success, duration in rows:
@@ -169,11 +169,11 @@ class MemoryManager(Agent):
 
             content, in_tok, out_tok = await self._llm_complete(
                 SYSTEM_PROMPT,
-                f"Analyseer deze recente taken en identificeer welke een skill zouden moeten opleveren:\n\n" + "\n".join(runs),
+                f"Analyze these recent tasks and identify which should yield a skill:\n\n" + "\n".join(runs),
                 temperature=0.3,
             )
 
             return AgentResult(success=True, output=content, input_tokens=in_tok, output_tokens=out_tok)
 
         except Exception as e:
-            return AgentResult(success=False, output=f"Fout: {e}")
+            return AgentResult(success=False, output=f"Error: {e}")

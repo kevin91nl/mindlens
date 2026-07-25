@@ -20,21 +20,21 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent een code agent van MindLens.
+SYSTEM_PROMPT = """You are a code agent of MindLens.
 
-Je hebt 4 tools:
-1. **bash** — voer shell commando's uit
-2. **file_read** — lees bestanden
-3. **file_write** — schrijf naar bestanden
-4. **memory** — zoek/bewaar kennis in de vault
+You have 4 tools:
+1. **bash** — execute shell commands
+2. **file_read** — read files
+3. **file_write** — write to files
+4. **memory** — search/store knowledge in the vault
 
-Werkwijze:
-- Lees eerst de relevante bestanden
-- Begrijp de context
-- Voer de taak uit
-- Test het resultaat
+Approach:
+- Read relevant files first
+- Understand the context
+- Execute the task
+- Test the result
 
-Antwoord in het NERLANDS. Wees beknopt.
+Always respond in the same language as the user's message. Be concise.
 """
 
 
@@ -42,7 +42,7 @@ class CodeAgent(Agent):
     """Minimal coding agent with 4 core tools."""
 
     name = "code_agent"
-    description = "Minimale code agent — bash, file read/write, memory"
+    description = "Minimal code agent — bash, file read/write, memory"
     capabilities = ["bash", "file_read", "file_write", "memory"]
 
     async def run(self, context: AgentContext) -> AgentResult:
@@ -50,11 +50,11 @@ class CodeAgent(Agent):
         # Gather context from memory/skills
         memory_context = self._search_memory(context.task)
 
-        user_message = f"Taak: {context.task}\n"
+        user_message = f"Task: {context.task}\n"
         if context.workspace:
-            user_message += f"Werkruimte: {context.workspace}\n"
+            user_message += f"Workspace: {context.workspace}\n"
         if memory_context:
-            user_message += f"\nRelevante kennis:\n{memory_context}"
+            user_message += f"\nRelevant knowledge:\n{memory_context}"
 
         # Let LLM decide what to do
         content, in_tok, out_tok = await self._llm_complete(
@@ -186,13 +186,13 @@ class CodeAgentYaml(CodeAgent):
 
         memory_context = self._search_memory(context.task)
 
-        user_message = f"Taak: {context.task}\n"
+        user_message = f"Task: {context.task}\n"
         if context.workspace:
-            user_message += f"Werkruimte: {context.workspace}\n"
+            user_message += f"Workspace: {context.workspace}\n"
         if memory_context:
-            user_message += f"\nRelevante kennis:\n{memory_context}"
+            user_message += f"\nRelevant knowledge:\n{memory_context}"
         if skill_context:
-            user_message += f"\nVaardigheden:\n{skill_context}"
+            user_message += f"\nSkills:\n{skill_context}"
 
         content, in_tok, out_tok = await self._llm_complete(
             system_prompt, user_message, temperature=0.3

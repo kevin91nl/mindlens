@@ -11,24 +11,24 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Session Observer van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Session Observer of MindLens Cortex.
 
-Je analyseert VS Code Copilot chat sessies om verspilling te identificeren.
+You analyze VS Code Copilot chat sessions to identify waste patterns.
 
-Zoek naar:
-1. Herhaalde fouten (zelfde error meerdere keren)
-2. Trage responses (lange wachttijd tussen berichten)
-3. Mislukte routing (verkeerde agent gekozen)
-4. Verspilde tokens (onnodig lange responses, herhaling)
-5. Patronen van inefficiëntie
+Look for:
+1. Repeated errors (same error multiple times)
+2. Slow responses (long wait time between messages)
+3. Failed routing (wrong agent chosen)
+4. Wasted tokens (unnecessarily long responses, repetition)
+5. Patterns of inefficiency
 
-Geef een gestructureerd rapport in het Nederlands.
+Always respond in the same language as the user's message with a structured report.
 """
 
 
 class SessionObserver(Agent):
     name = "session_observer"
-    description = "Leest VS Code sessies, identificeert verspilling en foutpatronen"
+    description = "Reads VS Code sessions, identifies waste and error patterns"
     scope = "global"
 
     def __init__(self, **kwargs) -> None:
@@ -38,11 +38,11 @@ class SessionObserver(Agent):
     async def run(self, context: AgentContext) -> AgentResult:
         task = context.task.lower()
 
-        if "recent" in task or "laatste" in task:
+        if "recent" in task or "latest" in task:
             return await self._analyze_recent_sessions()
-        elif "waste" in task or "verspil" in task:
+        elif "waste" in task:
             return await self._analyze_waste()
-        elif "error" in task or "fout" in task:
+        elif "error" in task:
             return await self._analyze_errors()
         else:
             return await self._analyze_recent_sessions()
@@ -50,7 +50,7 @@ class SessionObserver(Agent):
     async def _analyze_recent_sessions(self) -> AgentResult:
         """Analyze recent sessions for patterns."""
         if not self._sessions_dir or not self._sessions_dir.exists():
-            return AgentResult(success=True, output="Geen sessies gevonden.")
+            return AgentResult(success=True, output="No sessions found.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
 
@@ -79,13 +79,13 @@ class SessionObserver(Agent):
                 continue
 
         if not analysis:
-            return AgentResult(success=True, output="Geen analyseerbaar sessies gevonden.")
+            return AgentResult(success=True, output="No analyzable sessions found.")
 
         # Use LLM to analyze patterns
         analysis_text = json.dumps(analysis, indent=2)
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze recente VS Code sessies en identificeer patronen:\n\n{analysis_text}",
+            f"Analyze these recent VS Code sessions and identify patterns:\n\n{analysis_text}",
             temperature=0.3,
         )
 
@@ -94,7 +94,7 @@ class SessionObserver(Agent):
     async def _analyze_waste(self) -> AgentResult:
         """Identify wasted tokens and time."""
         if not self._sessions_dir or not self._sessions_dir.exists():
-            return AgentResult(success=True, output="Geen sessies gevonden.")
+            return AgentResult(success=True, output="No sessions found.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
 
@@ -113,22 +113,22 @@ class SessionObserver(Agent):
 
                 # Very long sessions with few user messages
                 if len(lines) > 100 and len(user_msgs) < 5:
-                    waste_signals.append(f"Sessie {f.stem[:8]}: {len(lines)} events, maar slechts {len(user_msgs)} user berichten")
+                    waste_signals.append(f"Session {f.stem[:8]}: {len(lines)} events, but only {len(user_msgs)} user messages")
 
                 # Many errors
                 if len(failed_tools) > 3:
-                    waste_signals.append(f"Sessie {f.stem[:8]}: {len(failed_tools)} gefaalde tool calls")
+                    waste_signals.append(f"Session {f.stem[:8]}: {len(failed_tools)} failed tool calls")
 
             except Exception:
                 continue
 
         if not waste_signals:
-            return AgentResult(success=True, output="Geen significante verspilling gedetecteerd in recente sessies.")
+            return AgentResult(success=True, output="No significant waste detected in recent sessions.")
 
         waste_text = "\n".join(waste_signals)
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze verspilling signalen en geef concrete verbetervoorstellen:\n\n{waste_text}",
+            f"Analyze these waste signals and provide concrete improvement suggestions:\n\n{waste_text}",
             temperature=0.3,
         )
 
@@ -137,7 +137,7 @@ class SessionObserver(Agent):
     async def _analyze_errors(self) -> AgentResult:
         """Analyze error patterns across sessions."""
         if not self._sessions_dir or not self._sessions_dir.exists():
-            return AgentResult(success=True, output="Geen sessies gevonden.")
+            return AgentResult(success=True, output="No sessions found.")
 
         files = sorted(self._sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
 
@@ -155,7 +155,7 @@ class SessionObserver(Agent):
                 continue
 
         if not error_patterns:
-            return AgentResult(success=True, output="Geen foutpatronen gevonden in recente sessies.")
+            return AgentResult(success=True, output="No error patterns found in recent sessions.")
 
         # Sort by frequency
         sorted_errors = sorted(error_patterns.items(), key=lambda x: -x[1])
@@ -163,7 +163,7 @@ class SessionObserver(Agent):
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze herhaalde foutpatronen en geef oplossingen:\n\n{error_text}",
+            f"Analyze these repeated error patterns and provide solutions:\n\n{error_text}",
             temperature=0.3,
         )
 

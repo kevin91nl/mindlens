@@ -200,14 +200,14 @@ class YamlAgent(Agent):
         # Build the prompt
         user_message = f"Taak: {context.task}\n"
         if context.workspace:
-            user_message += f"Werkruimte: {context.workspace}\n"
+            user_message += f"Workspace: {context.workspace}\n"
         if tool_data:
-            user_message += f"\nBeschikbare data:\n{tool_data}"
+            user_message += f"\nAvailable data:\n{tool_data}"
 
         # Build system prompt with skills injected
         system_prompt = self._system_prompt
         if skills_content:
-            system_prompt += f"\n\n# Beschikbare Skills\n\n{skills_content}"
+            system_prompt += f"\n\n# Available Skills\n\n{skills_content}"
 
         # Call LLM — use agentic loop if mode=agentic, else single call
         mode = self._config.get("mode", "single")
@@ -229,7 +229,7 @@ class YamlAgent(Agent):
 
         output = content
         if created_issues:
-            output += "\n\n---\n📋 GitHub issues aangemaakt:\n"
+            output += "\n\n---\n📋 GitHub issues created:\n"
             for issue_url in created_issues:
                 output += f"  ✅ {issue_url}\n"
         if triage_actions:
@@ -387,7 +387,7 @@ class YamlAgent(Agent):
                             criteria = action.get("acceptatie_criteria", action.get("criteria", ""))
                             if criteria:
                                 result = await self._run_bash_tool("comment_issue", {"number": str(number), "comment": criteria})
-                                results.append(f"✅ #{number} acceptatie criteria toegevoegd")
+                                results.append(f"✅ #{number} acceptance criteria added")
                         # Add labels
                         for label in action.get("labels_added", []):
                             result = await self._run_bash_tool("label_issue", {"number": str(number), "label": label})
@@ -623,7 +623,7 @@ class YamlAgent(Agent):
                 rows = await cursor.fetchall()
                 await conn.close()
                 if not rows:
-                    return "Geen agent runs gevonden."
+                    return "No agent runs found."
                 output = ""
                 for agent, ws, task, success, tokens, cost, duration in rows:
                     icon = "✅" if success else "❌"
@@ -639,7 +639,7 @@ class YamlAgent(Agent):
                     constitution = item / "constitution.md"
                     if constitution.exists():
                         workspaces.append(item.name)
-            return ", ".join(workspaces) if workspaces else "Geen workspaces gevonden."
+            return ", ".join(workspaces) if workspaces else "No workspaces found."
 
         elif tool_name == "list_issues":
             ws = context.workspace or "global"
@@ -683,7 +683,7 @@ class YamlAgent(Agent):
                         idx = yaml.safe_load(ws_index.read_text()) or {}
                         for s in idx.get("skills") or []:
                             all_skills.append(f"[{item.name}] {s.get('name', '?')}: {s.get('description', '?')[:60]}")
-            return "\n".join(all_skills) if all_skills else "Geen skills gevonden."
+            return "\n".join(all_skills) if all_skills else "No skills found."
 
         elif tool_name == "create_issue":
             # Handled by LLM decision — return placeholder
@@ -740,7 +740,7 @@ class YamlAgent(Agent):
             # Try to connect to core DB
             db_path = self.config.core_db_path
             if not db_path.exists():
-                return "Geen agent_runs database gevonden."
+                return "No agent_runs database found."
 
             import asyncio
 
@@ -814,14 +814,19 @@ class YamlAgent(Agent):
     def create_github_issue(self, title: str, body: str, labels: list[str]) -> str | None:
         """Create a GitHub issue using gh CLI."""
         try:
-            # Find the repo path from repos.yaml
-            repos_path = self.config.vault_path / "repos.yaml"
+            # Find the repo path from workspace repos.yaml
             cwd = str(self.config.project_path)  # default
-            if repos_path.exists():
-                repos_data = yaml.safe_load(repos_path.read_text()) or {}
-                for repo in repos_data.get("repos") or []:
-                    if repo.get("type") == "core":
-                        cwd = str(Path(repo.get("path", "")).expanduser())
+            for ws_dir in self.config.vault_path.iterdir():
+                if not ws_dir.is_dir():
+                    continue
+                repos_path = ws_dir / "repos.yaml"
+                if repos_path.exists():
+                    repos_data = yaml.safe_load(repos_path.read_text()) or {}
+                    for repo in repos_data.get("repos") or []:
+                        if repo.get("type") == "core":
+                            cwd = str(Path(repo.get("path", "")).expanduser())
+                            break
+                    if cwd != str(self.config.project_path):
                         break
 
             cmd = ["gh", "issue", "create", "--title", title, "--body", body]

@@ -8,24 +8,24 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Test Runner van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Test Runner of MindLens Cortex.
 
-Je verifieert of verbeteringen daadwerkelijk werken door:
-1. De huidige staat te meten
-2. De voorgestelde verandering te evalueren
-3. Te controleren of het verwachte resultaat wordt bereikt
+You verify whether improvements actually work by:
+1. Measuring the current state
+2. Evaluating the proposed change
+3. Checking whether the expected result is achieved
 
-Geef een gestructureerd testrapport in het Nederlands:
-- ✅ geslaagd / ❌ gefaald
-- Wat werd getest
-- Wat het resultaat was
-- Aanbevelingen
+Always respond in the same language as the user's message with a structured test report:
+- ✅ passed / ❌ failed
+- What was tested
+- What the result was
+- Recommendations
 """
 
 
 class TestRunner(Agent):
     name = "test_runner"
-    description = "Verificatie van verbeteringen, regressietests"
+    description = "Verification of improvements, regression tests"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:

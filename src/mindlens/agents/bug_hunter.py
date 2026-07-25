@@ -13,27 +13,27 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Bug Hunter van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Bug Hunter of MindLens Cortex.
 
-Je zoekt automatisch naar bugs in het systeem door:
-1. Agent runs te analyseren op herhaalde fouten
-2. VS Code sessies te scannen op foutpatronen
-3. Code te controleren op veelvoorkomende problemen
+You automatically search for bugs in the system by:
+1. Analyzing agent runs for repeated errors
+2. Scanning VS Code sessions for error patterns
+3. Checking code for common issues
 
-Voor elke gevonden bug, geef:
-- Titel (kort, beschrijvend)
-- Beschrijving (wat er mis is, hoe te reproduceren)
-- Ernst (low/medium/high/critical)
-- Voorgestelde fix (als je die kunt bedenken)
+For each bug found, provide:
+- Title (short, descriptive)
+- Description (what's wrong, how to reproduce)
+- Severity (low/medium/high/critical)
+- Suggested fix (if you can determine one)
 
-Antwoord in het Nederlands met een JSON array van bugs:
+Always respond in the same language as the user's message with a JSON array of bugs:
 [
     {
-        "title": "bug titel",
-        "description": "uitgebreide beschrijving",
+        "title": "bug title",
+        "description": "detailed description",
         "severity": "high",
         "labels": ["bug", "auto-detected"],
-        "suggested_fix": "hoe op te lossen"
+        "suggested_fix": "how to fix"
     }
 ]
 """
@@ -41,7 +41,7 @@ Antwoord in het Nederlands met een JSON array van bugs:
 
 class BugHunter(Agent):
     name = "bug_hunter"
-    description = "Automatische bug detectie en GitHub issue aanmaak"
+    description = "Automatic bug detection and GitHub issue creation"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:
@@ -49,7 +49,7 @@ class BugHunter(Agent):
 
         if "github" in task or "issue" in task:
             return await self._hunt_and_create_issues()
-        elif "scan" in task or "zoek" in task:
+        elif "scan" in task or "search" in task:
             return await self._scan_for_bugs()
         else:
             return await self._hunt_and_create_issues()
@@ -59,11 +59,11 @@ class BugHunter(Agent):
         findings = await self._gather_findings()
 
         if not findings:
-            return AgentResult(success=True, output="✅ Geen bugs gevonden in recente data.")
+            return AgentResult(success=True, output="✅ No bugs found in recent data.")
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze bevindingen en identificeer bugs:\n\n{findings}",
+            f"Analyze these findings and identify bugs:\n\n{findings}",
             temperature=0.2,
         )
 
@@ -74,11 +74,11 @@ class BugHunter(Agent):
         findings = await self._gather_findings()
 
         if not findings:
-            return AgentResult(success=True, output="✅ Geen bugs gevonden.")
+            return AgentResult(success=True, output="✅ No bugs found.")
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze bevindingen en identificeer bugs. Geef een JSON array:\n\n{findings}",
+            f"Analyze these findings and identify bugs. Return a JSON array:\n\n{findings}",
             temperature=0.2,
         )
 
@@ -89,7 +89,7 @@ class BugHunter(Agent):
         except json.JSONDecodeError:
             return AgentResult(
                 success=True,
-                output=f"Bugs gevonden maar niet gestructureerd:\n\n{content[:500]}",
+                output=f"Bugs found but not structured:\n\n{content[:500]}",
                 input_tokens=in_tok,
                 output_tokens=out_tok,
             )

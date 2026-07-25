@@ -12,9 +12,9 @@ from mindlens.agents.base import Agent, AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Security Red Team agent van MindLens Cortex.
+SYSTEM_PROMPT = """You are the Security Red Team agent of MindLens Cortex.
 
-Je controleert het hele MindLens project op beveiligingsproblemen:
+You check the entire MindLens project for security issues:
 
 1. **Secrets in code** — API keys, tokens, passwords hardcoded
 2. **Injection vulnerabilities** — SQL injection, command injection, path traversal
@@ -25,35 +25,35 @@ Je controleert het hele MindLens project op beveiligingsproblemen:
 7. **Telegram security** — user ID validation, message injection
 8. **File system security** — path traversal, symlink attacks
 
-Antwoord in het Nederlands met een JSON array van gevonden issues:
+Always respond in the same language as the user's message with a JSON array of found issues:
 [
     {
-        "title": "korte beschrijving",
-        "description": "uitgebreide beschrijving met locatie en impact",
+        "title": "short description",
+        "description": "detailed description with location and impact",
         "severity": "critical|high|medium|low",
         "category": "secrets|injection|auth|deps|config|exposure|filesystem",
-        "file": "pad naar bestand",
+        "file": "path to file",
         "line": 123,
         "labels": ["security", "auto-detected"],
-        "suggested_fix": "hoe op te lossen"
+        "suggested_fix": "how to fix"
     }
 ]
 
-Wees grondig maar niet paranoïde. Alleen echte issues, niet theoretische risico's.
+Be thorough but not paranoid. Only real issues, not theoretical risks.
 """
 
 
 class SecurityRedTeam(Agent):
     name = "security_red_team"
-    description = "Security scanning — detecteert vulnerabilities en maakt GitHub issues aan"
+    description = "Security scanning — detects vulnerabilities and creates GitHub issues"
     scope = "global"
 
     async def run(self, context: AgentContext) -> AgentResult:
         task = context.task.lower()
 
-        if "full" in task or "complete" in task or "volledig" in task:
+        if "full" in task or "complete" in task:
             return await self._full_scan()
-        elif "quick" in task or "snel" in task:
+        elif "quick" in task:
             return await self._quick_scan()
         elif "secret" in task or "key" in task or "token" in task:
             return await self._scan_secrets()
@@ -69,7 +69,7 @@ class SecurityRedTeam(Agent):
         # 1. Scan for hardcoded secrets
         secrets = self._find_secrets()
         if secrets:
-            findings.append("## Mogelijke secrets in code\n")
+            findings.append("## Possible secrets in code\n")
             for s in secrets[:10]:
                 findings.append(f"- {s['file']}:{s['line']} — {s['match'][:60]}")
 
@@ -88,11 +88,11 @@ class SecurityRedTeam(Agent):
                 findings.append(f"- {g}")
 
         if not findings:
-            return AgentResult(success=True, output="✅ Quick scan: geen security issues gevonden.")
+            return AgentResult(success=True, output="✅ Quick scan: no security issues found.")
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze security bevindingen:\n\n{''.join(findings)}",
+            f"Analyze these security findings:\n\n{''.join(findings)}",
             temperature=0.2,
         )
 
@@ -131,11 +131,11 @@ class SecurityRedTeam(Agent):
                 findings.append(f"- {c}")
 
         if not findings:
-            return AgentResult(success=True, output="✅ Full scan: geen security issues gevonden.")
+            return AgentResult(success=True, output="✅ Full scan: no security issues found.")
 
         content, in_tok, out_tok = await self._llm_complete(
             SYSTEM_PROMPT,
-            f"Analyseer deze volledige security scan:\n\n{''.join(findings)}",
+            f"Analyze this full security scan:\n\n{''.join(findings)}",
             temperature=0.2,
         )
 
@@ -146,9 +146,9 @@ class SecurityRedTeam(Agent):
         secrets = self._find_secrets()
 
         if not secrets:
-            return AgentResult(success=True, output="✅ Geen hardcoded secrets gevonden.")
+            return AgentResult(success=True, output="✅ No hardcoded secrets found.")
 
-        output = "🔐 Gevonden mogelijke secrets:\n\n"
+        output = "🔐 Possible secrets found:\n\n"
         for s in secrets:
             output += f"• `{s['file']}:{s['line']}` — {s['match'][:80]}\n"
 
@@ -182,23 +182,23 @@ class SecurityRedTeam(Agent):
         for issue in issues:
             title = f"[Security] {issue.get('title', 'Security issue')}"
             body = f"## Security Issue (auto-detected)\n\n{issue.get('description', '')}\n\n"
-            body += f"**Ernst:** {issue.get('severity', 'medium')}\n"
-            body += f"**Categorie:** {issue.get('category', 'unknown')}\n"
+            body += f"**Severity:** {issue.get('severity', 'medium')}\n"
+            body += f"**Category:** {issue.get('category', 'unknown')}\n"
             if issue.get("file"):
-                body += f"**Locatie:** `{issue['file']}`"
+                body += f"**Location:** `{issue['file']}`"
                 if issue.get("line"):
                     body += f":{issue['line']}"
                 body += "\n"
             if issue.get("suggested_fix"):
-                body += f"\n## Voorgestelde fix\n\n{issue['suggested_fix']}\n"
-            body += "\n---\n*Automatisch gedetecteerd door MindLens Security Red Team*\n"
+                body += f"\n## Suggested fix\n\n{issue['suggested_fix']}\n"
+            body += "\n---\n*Auto-detected by MindLens Security Red Team*\n"
 
             labels = issue.get("labels", ["security", "auto-detected"])
             url = self._create_github_issue(title, body, labels)
             if url:
                 created.append(f"✅ [{issue.get('title', '?')}]({url})")
             else:
-                created.append(f"❌ {issue.get('title', '?')} (aanmaken mislukt)")
+                created.append(f"❌ {issue.get('title', '?')} (creation failed)")
 
         output = f"🛡️ Security Red Team Resultaat:\n\n"
         output += f"**{len(created)} issues gevonden en verwerkt:**\n\n"
@@ -259,15 +259,15 @@ class SecurityRedTeam(Agent):
 
         env_example = project / ".env.example"
         if not env_example.exists():
-            issues.append(".env.example niet gevonden — gebruikers weten niet welke variabelen nodig zijn")
+            issues.append(".env.example not found — users don't know which variables are needed")
             return issues
 
         content = env_example.read_text()
         # Check for real values (not placeholders)
         if re.search(r'sk-or-v1-[a-zA-Z0-9]{20,}', content):
-            issues.append("Mogelijke echte API key in .env.example!")
+            issues.append("Possible real API key in .env.example!")
         if "8757887592" in content:
-            issues.append("Echte Telegram token in .env.example!")
+            issues.append("Real Telegram token in .env.example!")
 
         return issues
 
@@ -278,7 +278,7 @@ class SecurityRedTeam(Agent):
 
         gitignore = project / ".gitignore"
         if not gitignore.exists():
-            issues.append(".gitignore niet gevonden!")
+            issues.append(".gitignore not found!")
             return issues
 
         content = gitignore.read_text()

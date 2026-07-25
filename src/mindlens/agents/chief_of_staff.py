@@ -11,32 +11,33 @@ from mindlens.core.event_bus import Event
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Je bent de Chief of Staff van MindLens, een AI-native holding company OS.
+SYSTEM_PROMPT_TEMPLATE = """You are the Chief of Staff of MindLens, an AI-native holding company OS.
 
-Jouw rol:
-- Interpret natuurlijke taalverzoeken van de gebruiker
-- Routeer ze naar de juiste workspace en agent
-- Geef dagelijkse updates en statusrapporten
-- Beheer communicatie tussen workspaces
+Your role:
+- Interpret natural language requests from the user
+- Route them to the correct workspace and agent
+- Provide daily updates and status reports
+- Manage communication between workspaces
 
-Beschikbare workspaces:
-- Research: Onderzoek & kennisdistillatie (raw → wiki pipeline)
-- Tuvia: AI-gedreven businessontwikkeling
-- RiskStudio: Architectuurdocs & kwaliteitsbewaking
+Available workspaces:
+{workspace_list}
 
-Beschikbare agents:
-- workspace_manager: Workspaces aanmaken/beheren
-- agent_architect: Nieuwe agents ontwerpen
-- agent_optimizer: Prestaties monitoren, token-tracking
-- agent_librarian: Skill-extractie, versiebeheer
+Available agents:
+- workspace_manager: Create/manage workspaces, add agents
+- agent_architect: Design new agents
+- agent_optimizer: Monitor performance, token tracking
+- agent_librarian: Skill extraction, version control
 
-Antwoord ALTIJD in het Nederlands. Wees beknopt en behulpzaam.
+ALWAYS respond in the same language as the user's message. Be concise and helpful.
 
-Als je een vraag direct kunt beantwoorden, doe dat dan gewoon.
-Als het verzoek een specifieke agent nodig heeft, zeg dan: "ROUTE: agent_naam | workspace | taak"
+If you can answer a question directly, do so.
+If the request needs a specific agent, say: "ROUTE: agent_name | workspace | task"
 
-BELANGRIJK: Als de gebruiker een onderzoeksvraag stelt (begint met "onderzoek", "hoe", "wat", "waarom", "wanneer" over een onderwerp), routeer dan naar research_intake:
-"ROUTE: research_intake | Research | <de volledige vraag>"
+IMPORTANT: If the user asks a research question (starts with "research", "how", "what", "why", "when" about a topic), route to research_intake:
+"ROUTE: research_intake | Research | <the full question>"
+
+If the user wants to create a workspace or manage agents, route to workspace_manager:
+"ROUTE: workspace_manager | HQ | <the full request>"
 """
 
 
@@ -44,6 +45,30 @@ class ChiefOfStaff(Agent):
     name = "chief_of_staff"
     description = "Telegram interface, routing, daily briefing"
     capabilities = ["route", "answer", "briefing", "manage"]
+
+    def _discover_workspaces(self) -> str:
+        """Build workspace list from vault for system prompt."""
+        vault = self.config.vault_path
+        lines = []
+        for item in sorted(vault.iterdir()):
+            if item.is_dir() and not item.name.startswith((".", "_")):
+                constitution = item / "constitution.md"
+                mission = ""
+                if constitution.exists():
+                    for line in constitution.read_text().splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and not line.startswith("-"):
+                            mission = line
+                            break
+                desc = f": {mission}" if mission else ""
+                lines.append(f"- {item.name}{desc}")
+        return "\n".join(lines) if lines else "- (geen workspaces gevonden)"
+
+    def _get_system_prompt(self) -> str:
+        """Build dynamic system prompt with current workspace list."""
+        return SYSTEM_PROMPT_TEMPLATE.format(
+            workspace_list=self._discover_workspaces()
+        )
 
     def _load_wiki_context(self, workspace: str) -> str:
         """Load wiki page summaries for the current workspace."""
@@ -74,17 +99,17 @@ class ChiefOfStaff(Agent):
         user_text = context.task
         workspace = context.workspace or "HQ"
 
-        user_message = f"Werkruimte: [{workspace}]\nBericht: {user_text}"
+        user_message = f"Workspace: [{workspace}]\nMessage: {user_text}"
 
         events = self.event_bus.history(limit=5)
         if events:
             event_text = "\n".join(f"- {e}" for e in events)
-            user_message += f"\n\nRecente events:\n{event_text}"
+            user_message += f"\n\nRecent events:\n{event_text}"
 
         if workspace and workspace != "HQ":
             wiki_context = self._load_wiki_context(workspace)
             if wiki_context:
-                user_message += f"\n\nWerkruimte kennis ({workspace}):\n{wiki_context}"
+                user_message += f"\n\nWorkspace knowledge ({workspace}):\n{wiki_context}"
 
         return user_message
 
@@ -93,7 +118,7 @@ class ChiefOfStaff(Agent):
         user_message = self._build_context(context)
 
         content, in_tok, out_tok = await self._llm_complete(
-            SYSTEM_PROMPT, user_message, temperature=0.3
+            self._get_system_prompt(), user_message, temperature=0.3
         )
 
         # Check for routing instruction
@@ -106,7 +131,7 @@ class ChiefOfStaff(Agent):
 
                 return AgentResult(
                     success=True,
-                    output=content.split("ROUTE:")[0].strip() or f"Routeren naar {target_agent}...",
+                    output=content.split("ROUTE:")[0].strip() or f"Routing to {target_agent}...",
                     input_tokens=in_tok,
                     output_tokens=out_tok,
                     events=[{
@@ -134,7 +159,7 @@ class ChiefOfStaff(Agent):
         full_response = ""
         async for chunk in self.llm.stream(
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self._get_system_prompt()},
                 {"role": "user", "content": user_message},
             ],
             temperature=0.3,
