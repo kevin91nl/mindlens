@@ -26,6 +26,7 @@ class Config:
 
     # Vault
     vault_path: Path = field(default_factory=lambda: Path.home() / "mindlens")
+    project_path: Path = field(default_factory=lambda: Path(os.environ.get("MINDLENS_PROJECT_PATH", str(Path.home() / "projects" / "mindlens"))))
 
     # Runtime
     env: str = "development"
@@ -85,6 +86,7 @@ class Config:
             telegram_token=os.environ.get("MINDLENS_TELEGRAM_TOKEN", ""),
             telegram_user_id=int(os.environ.get("MINDLENS_TELEGRAM_USER_ID", "0")),
             vault_path=vault,
+            project_path=Path(os.environ.get("MINDLENS_PROJECT_PATH", str(Path.home() / "projects" / "mindlens"))),
             env=os.environ.get("MINDLENS_ENV", "development"),
             log_level=os.environ.get("MINDLENS_LOG_LEVEL", "INFO"),
         )

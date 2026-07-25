@@ -288,6 +288,9 @@ class TelegramBot:
         self, update: object, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Log Telegram handler failures without losing the update."""
+        if "Conflict" in str(context.error):
+            logger.warning("Telegram conflict (another instance polling). Will retry on next update.")
+            return
         logger.exception("Telegram update handling failed", exc_info=context.error)
 
     async def _handle_help(

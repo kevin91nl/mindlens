@@ -206,7 +206,7 @@ class BugHunter(Agent):
                 capture_output=True,
                 text=True,
                 timeout=30,
-                cwd=str(Path.home() / "projects" / "mindlens"),
+                cwd=str(self.config.project_path),
             )
             if result.returncode == 0:
                 url = result.stdout.strip()

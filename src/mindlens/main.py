@@ -56,7 +56,7 @@ class MindLens:
         self.workspace_registry = WorkspaceRegistry(config.vault_path)
         self.telegram = TelegramBot(config, self.event_bus)
         self.file_watcher = FileWatcher(self.event_bus, config.vault_path)
-        self.scheduler = Scheduler(config.vault_path, self._handle_scheduled_task)
+        self.scheduler = Scheduler(config.vault_path, self._handle_scheduled_task, agent_discoverer=discover_yaml_agents)
         self.hot_reloader = AgentHotReloader(
             vault_path=config.vault_path,
             on_agent_added=self._on_agent_added,
@@ -69,6 +69,20 @@ class MindLens:
 
     async def boot(self) -> None:
         """Boot all MindLens systems."""
+        # Single-instance guard: PID lockfile
+        import os, signal
+        lockfile = Path("/tmp/mindlens.pid")
+        if lockfile.exists():
+            try:
+                old_pid = int(lockfile.read_text().strip())
+                os.kill(old_pid, 0)  # check if alive
+                logger.error("MindLens already running (PID %d). Exiting.", old_pid)
+                sys.exit(1)
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass  # stale lockfile, overwrite below
+        lockfile.write_text(str(os.getpid()))
+        self._lockfile = lockfile
+
         logger.info("🧠 MindLens booting...")
 
         # 1. Init databases
@@ -125,6 +139,13 @@ class MindLens:
             await self._core_db.close()
         for db in self._workspace_dbs.values():
             await db.close()
+        # Remove PID lockfile
+        lockfile = getattr(self, "_lockfile", None)
+        if lockfile and lockfile.exists():
+            try:
+                lockfile.unlink()
+            except OSError:
+                pass
         logger.info("🧠 MindLens stopped.")
 
     # --- Hot-reload callbacks ---

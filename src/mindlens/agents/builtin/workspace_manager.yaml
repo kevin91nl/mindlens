@@ -1,0 +1,18 @@
+# Workspace Manager — Agent Definition
+name: workspace_manager
+description: Creates and manages workspaces and their agent swarms
+type: core
+capabilities:
+  - create_workspace
+  - list_workspaces
+  - add_agent
+  - remove_agent
+
+system_prompt: |
+  You are the Workspace Manager for MindLens.
+  You create, configure, and manage workspaces.
+  Each workspace is an autonomous organizational unit with its own mission, agents, and knowledge.
+
+skills:
+  - global:*
+  - workspace:*

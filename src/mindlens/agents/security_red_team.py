@@ -214,7 +214,7 @@ class SecurityRedTeam(Agent):
 
     def _find_secrets(self) -> list[dict]:
         """Find potential hardcoded secrets in the codebase."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         if not project.exists():
             return []
 
@@ -254,7 +254,7 @@ class SecurityRedTeam(Agent):
 
     def _check_env_example(self) -> list[str]:
         """Check .env.example for issues."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         issues = []
 
         env_example = project / ".env.example"
@@ -273,7 +273,7 @@ class SecurityRedTeam(Agent):
 
     def _check_gitignore(self) -> list[str]:
         """Check .gitignore completeness."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         issues = []
 
         gitignore = project / ".gitignore"
@@ -291,7 +291,7 @@ class SecurityRedTeam(Agent):
 
     def _scan_python_code(self) -> list[dict]:
         """Scan Python code for common security issues."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         issues = []
 
         patterns = [
@@ -329,7 +329,7 @@ class SecurityRedTeam(Agent):
 
     def _check_dependencies(self) -> list[str]:
         """Check for dependency issues."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         issues = []
 
         pyproject = project / "pyproject.toml"
@@ -343,7 +343,7 @@ class SecurityRedTeam(Agent):
 
     def _check_config(self) -> list[str]:
         """Check configuration issues."""
-        project = Path.home() / "projects" / "mindlens"
+        project = self.config.project_path
         issues = []
 
         # Check if .env is in git
@@ -368,7 +368,7 @@ class SecurityRedTeam(Agent):
                  "--body", body,
                  "--label", ",".join(labels)],
                 capture_output=True, text=True, timeout=30,
-                cwd=str(Path.home() / "projects" / "mindlens"),
+                cwd=str(self.config.project_path),
             )
             if result.returncode == 0:
                 url = result.stdout.strip()

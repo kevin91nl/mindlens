@@ -75,9 +75,10 @@ TaskHandler = Callable[[str, str, str], Coroutine[Any, Any, None]]
 class Scheduler:
     """Reads scheduled_tasks.yaml and triggers tasks at the right time."""
 
-    def __init__(self, vault_path: Path, handler: TaskHandler) -> None:
+    def __init__(self, vault_path: Path, handler: TaskHandler, agent_discoverer: Callable[[Path], list[Path]] | None = None) -> None:
         self.vault_path = vault_path
         self.handler = handler
+        self._agent_discoverer = agent_discoverer
         self._tasks: list[ScheduledTask] = []
         self._running = False
         self._trigger_tasks: dict[str, asyncio.Task] = {}  # name → asyncio.Task
@@ -109,10 +110,11 @@ class Scheduler:
 
     def _load_yaml_agent_tasks(self) -> list[ScheduledTask]:
         """Discover YAML agents with schedule or trigger fields and create tasks."""
-        from mindlens.agents.yaml_agent import discover_yaml_agents
+        if not self._agent_discoverer:
+            return []
 
         tasks = []
-        yaml_paths = discover_yaml_agents(self.vault_path)
+        yaml_paths = self._agent_discoverer(self.vault_path)
 
         for yaml_path in yaml_paths:
             try:

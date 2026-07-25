@@ -429,7 +429,7 @@ class YamlAgent(Agent):
                     command = command.replace(f"{{{key}}}", str(value))
                 # Also substitute standard variables
                 command = command.replace("{vault_path}", str(self.config.vault_path))
-                command = command.replace("{project_path}", str(Path.home() / "projects" / "mindlens"))
+                command = command.replace("{project_path}", str(self.config.project_path))
                 # Execute
                 tool_copy = dict(tool)
                 tool_copy["command"] = command
@@ -463,7 +463,7 @@ class YamlAgent(Agent):
         LLM calls tools via API. We execute, feed results back.
         No tool calls = LLM is done.
         """
-        project = str(Path.home() / "projects" / "mindlens")
+        project = str(self.config.project_path)
 
         # Define the bash tool in OpenAI function calling format
         tools = [
@@ -569,7 +569,7 @@ class YamlAgent(Agent):
 
         # Template variables
         vault = self.config.vault_path
-        project = Path.home() / 'projects' / 'mindlens'
+        project = self.config.project_path
         variables = {
             "vault_path": str(vault),
             "project_path": str(project),
@@ -816,7 +816,7 @@ class YamlAgent(Agent):
         try:
             # Find the repo path from repos.yaml
             repos_path = self.config.vault_path / "repos.yaml"
-            cwd = str(Path.home() / "projects" / "mindlens")  # default
+            cwd = str(self.config.project_path)  # default
             if repos_path.exists():
                 repos_data = yaml.safe_load(repos_path.read_text()) or {}
                 for repo in repos_data.get("repos") or []:
@@ -848,20 +848,5 @@ class YamlAgent(Agent):
             logger.error("Exception creating GitHub issue: %s", e)
             return None
 
-def discover_yaml_agents(vault_path: Path) -> list[Path]:
-    """Discover all YAML agent definitions in the vault."""
-    agents = []
-
-    # Global agents
-    global_dir = vault_path / "agents"
-    if global_dir.exists():
-        agents.extend(sorted(global_dir.glob("*.yaml")))
-
-    # Workspace agents
-    for item in vault_path.iterdir():
-        if item.is_dir() and not item.name.startswith("."):
-            ws_agents = item / "agents"
-            if ws_agents.exists():
-                agents.extend(sorted(ws_agents.glob("*.yaml")))
-
-    return agents
+# Re-export from discovery module for backward compatibility
+from mindlens.agents.discovery import discover_yaml_agents
