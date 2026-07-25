@@ -1,8 +1,22 @@
 [project]
 name = "mindlens"
 version = "0.1.0"
-description = "AI-native holding company OS"
+description = "AI-native holding company OS — autonomous workspaces, self-improving agents, Telegram interface"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
+authors = [
+    {name = "Kevin", email = "kevin@mindlens.dev"},
+]
+keywords = ["ai", "agents", "automation", "telegram", "self-improving"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "langgraph>=0.4",
     "langchain-openai>=0.3",
@@ -14,9 +28,13 @@ dependencies = [
     "watchdog>=6.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kevin91nl/mindlens"
+Repository = "https://github.com/kevin91nl/mindlens"
+Issues = "https://github.com/kevin91nl/mindlens/issues"
+
 [project.scripts]
 mindlens = "mindlens.main:run"
-mindlens-cli = "mindlens_cli:main"
 
 [build-system]
 requires = ["hatchling"]
