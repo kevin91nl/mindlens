@@ -20,6 +20,7 @@ from mindlens.agents.reflector import Reflector
 from mindlens.agents.memory_manager import MemoryManager
 from mindlens.agents.test_runner import TestRunner
 from mindlens.agents.bug_hunter import BugHunter
+from mindlens.agents.security_red_team import SecurityRedTeam
 from mindlens.core.config import Config
 from mindlens.core.db import init_core_db, init_workspace_db, record_agent_run
 from mindlens.core.event_bus import Event, EventBus
@@ -154,6 +155,7 @@ class MindLens:
             MemoryManager,
             TestRunner,
             BugHunter,
+            SecurityRedTeam,
         ]
         for agent_cls in agents:
             self.registry.register(agent_cls)
