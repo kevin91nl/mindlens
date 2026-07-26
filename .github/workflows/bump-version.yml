@@ -45,3 +45,11 @@ jobs:
           git push origin main --tags
           
           echo "Bumped $VERSION → $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger PyPI publish
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          gh workflow run workflow.yml -f tag="v${{ steps.bump.outputs.new_version || '0.0.0' }}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
