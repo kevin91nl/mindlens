@@ -50,6 +50,6 @@ jobs:
       - name: Trigger PyPI publish
         if: steps.check.outputs.skip == 'false'
         run: |
-          gh workflow run workflow.yml -f tag="v${{ steps.bump.outputs.new_version || '0.0.0' }}" || true
+          gh workflow run workflow.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
