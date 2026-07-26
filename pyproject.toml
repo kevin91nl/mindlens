@@ -1,6 +1,6 @@
 [project]
 name = "mindlens"
-version = "0.1.1"
+version = "0.1.2"
 description = "AI-native holding company OS — autonomous workspaces, self-improving agents, Telegram interface"
 readme = "README.md"
 license = "MIT"
