@@ -1,11 +1,12 @@
-name: Auto Bump Version
+name: Bump & Publish
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  bump:
+  bump-and-publish:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -27,6 +28,7 @@ jobs:
           fi
 
       - name: Bump patch version
+        id: bump
         if: steps.check.outputs.skip == 'false'
         run: |
           VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
@@ -46,7 +48,12 @@ jobs:
           git push origin main --tags
           
           echo "Bumped $VERSION → $NEW_VERSION"
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Build package
         if: steps.check.outputs.skip == 'false'
